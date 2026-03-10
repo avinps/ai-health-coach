@@ -19,7 +19,7 @@ This project follows a production-grade modular ML engineering structure:
 5. **Adaptive Feedback Loop:** A time-series analytical engine that tracks user adherence and dynamically recalibrates calorie/workout targets when metabolic plateaus are detected.
 
 ## 📂 Repository Structure
-\`\`\`text
+```bash
 ai-health-coach/
 ├── api/                  # FastAPI backend services (Planned)
 ├── data/                 # Raw and processed datasets (Ignored in Git)
@@ -28,8 +28,7 @@ ai-health-coach/
 └── src/
     ├── data/             # Scripts for cleaning, scaling, and SMOTE
     └── models/           # Training scripts for Ensemble and K-Means
-\`\`\`
-
+```
 ## 🚀 Current Phase
 * Architecting the unified data schema.
 * Implementing the data ingestion and KNN imputation pipeline.
