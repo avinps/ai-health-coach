@@ -31,4 +31,4 @@ ai-health-coach/
 ```
 ## 🚀 Current Phase
 * Architecting the unified data schema.
-* Implementing the data ingestion and KNN imputation pipeline.
+* Model Building and evaluation
