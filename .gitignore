@@ -43,4 +43,5 @@ frontend/.env
 frontend/.env.local
 
 # Models: 
-models/*.joblib
+models/*.pkl
+models/model_metrics.json

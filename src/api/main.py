@@ -1,156 +1,768 @@
+import json
+import pickle
+import warnings
+from pathlib import Path
+from typing import Any, Dict, List, Literal, Optional
+
+import numpy as np
+import pandas as pd
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import Optional
-import joblib
-import pandas as pd
-import shap
-from contextlib import asynccontextmanager
-import os
+from pydantic import BaseModel, Field, validator
 
-models = {}
+warnings.filterwarnings("ignore")
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    print("--- 🧠 BOOTING UP AI ENGINE ---")
-    MODELS_DIR = os.path.join(os.path.dirname(__file__), '../../models')
-    try:
-        models['diabetes'] = joblib.load(os.path.join(MODELS_DIR, 'diabetes_model.joblib'))
-        models['mental'] = joblib.load(os.path.join(MODELS_DIR, 'mental_health_model.joblib'))
-        models['physical'] = joblib.load(os.path.join(MODELS_DIR, 'physical_health_model.joblib'))
-        models['cardio'] = joblib.load(os.path.join(MODELS_DIR, 'cardio_model.joblib'))
-        models['cdc_scaler'] = joblib.load(os.path.join(MODELS_DIR, 'cdc_scaler.joblib'))
-        models['cardio_scaler'] = joblib.load(os.path.join(MODELS_DIR, 'cardio_scaler.joblib'))
-        
-        xgb_estimator = models['diabetes'].named_estimators_['xgb']
-        models['diab_explainer'] = shap.TreeExplainer(xgb_estimator)
-        print("✅ Models, Scalers, and Explainers loaded!")
-    except Exception as e:
-        print(f"❌ ERROR loading assets: {e}")
-    yield
-    models.clear()
+# Project root detection (works from src/api/main.py AND api/main.py) 
+def _find_root() -> Path:
+    here = Path(__file__).resolve()
+    for candidate in [here.parent, here.parents[1], here.parents[2], here.parents[3]]:
+        if (candidate / "saved_models").exists() or (candidate / "models").exists():
+            return candidate
+    return here.parents[2]
 
-app = FastAPI(title="AI Health Coach API", lifespan=lifespan)
+ROOT = _find_root()
+# Artifacts saved by the notebook as saved_models/
+SAVED_DIR = ROOT / "saved_models"
+SAVED_DIR.mkdir(parents=True, exist_ok=True)
 
+# App 
+app = FastAPI(
+    title="AI Health Coach API v3.0",
+    description="7-target health risk prediction using GradientBoosting on synthetic_health_risk_75k",
+    version="3.0.0",
+)
 app.add_middleware(
-    CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://localhost:3000", "*"],
+    allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
 )
 
-# --- 1. THE FINAL CDC SCHEMA (14 Features) ---
-class CDCUserProfile(BaseModel):
-    HighBP: float
-    HighChol: float
-    BMI: float
-    Smoker: float
-    Stroke: float
-    HeartDiseaseorAttack: float
-    PhysActivity: float
-    Fruits: float
-    Veggies: float
-    HvyAlcoholConsump: float
-    GenHlth: float
-    DiffWalk: float
-    Sex: float
-    Age: float # Frontend sends raw age, backend handles the bracket
+# Artifact registry 
+A: Dict[str, Any] = {}   # loaded at startup
 
-# --- 2. THE FINAL CARDIO SCHEMA (14 Features) ---
-class CardioProfile(BaseModel):
-    id: float = 0.0 # Dummy ID to satisfy the model's expected column list
-    age: float
-    sex: float      # Changed from is_male to sex!
-    is_smoking: float
-    cigsPerDay: float = 0.0
-    prevalentStroke: float
-    prevalentHyp: float
-    diabetes: float
-    BMI: float
-    
-    # Optional Clinicals (With healthy baseline defaults if user leaves blank)
-    totChol: Optional[float] = 200.0
-    sysBP: Optional[float] = 120.0
-    diaBP: Optional[float] = 80.0
-    heartRate: Optional[float] = 75.0
-    glucose: Optional[float] = 90.0
 
-# Helper: Convert real age to CDC Bracket
-def get_cdc_age_bracket(age: float) -> float:
-    if age < 25: return 1.0
-    elif age < 30: return 2.0
-    elif age < 35: return 3.0
-    elif age < 40: return 4.0
-    elif age < 45: return 5.0
-    elif age < 50: return 6.0
-    elif age < 55: return 7.0
-    elif age < 60: return 8.0
-    elif age < 65: return 9.0
-    elif age < 70: return 10.0
-    elif age < 75: return 11.0
-    elif age < 80: return 12.0
-    else: return 13.0
+def _load_pkl(name: str) -> Any:
+    p = SAVED_DIR / name
+    if not p.exists():
+        print(f"  ⚠️  {p} not found")
+        return None
+    with open(p, "rb") as f:
+        obj = pickle.load(f)
+    print(f"  ✅ {name}")
+    return obj
 
-@app.post("/predict/cdc-risks")
-async def predict_cdc_risks(profile: CDCUserProfile):
-    data = profile.model_dump()
-    data['Age'] = get_cdc_age_bracket(data['Age'])
-    input_df = pd.DataFrame([data])
-    
+
+@app.on_event("startup")
+async def startup():
+    print(f"\n🚀 AI Health Coach API v3.0")
+    print(f"   Root:        {ROOT}")
+    print(f"   Saved models:{SAVED_DIR}")
+    print(f"   Exists:      {SAVED_DIR.exists()}")
+
+    A["models"]   = _load_pkl("all_models.pkl")
+    A["pipeline"] = _load_pkl("preprocessing_pipeline.pkl")
+
+    if A["pipeline"]:
+        pp = A["pipeline"]
+        print(f"\n   Features:  {len(pp['feature_columns'])}")
+        print(f"   Targets:   {len(pp['target_configs'])}")
+    print("✅ Startup complete.\n")
+
+
+# Feature importance helpers 
+
+# Features the user CANNOT change. Used to colour code the xAI bars
+NON_MODIFIABLE_FEATURES = {
+    'age', 'age_decade', 'bmi_age_interaction', 'is_female_reproductive',
+    'family_history_diabetes', 'family_history_heart_disease',
+    'family_history_hypertension', 'family_history_obesity', 'family_history_pcos',
+    'family_history_load',
+    'has_asthma', 'has_thyroid', 'has_allergies',
+    'gender_Male', 'gender_Other',
+    # height_cm and weight_kg are always hidden. BMI already represents them.
+    # Showing raw height/weight alongside BMI is redundant and confusing.
+    'height_cm', 'weight_kg',
+}
+
+
+def _is_non_modifiable(feature: str) -> bool:
+    return feature in NON_MODIFIABLE_FEATURES
+
+
+def _build_suppressed_features(raw_input: dict) -> set:
+    """
+    To Build the set of feature names to suppress from the xAI chart based on
+    the user's actual raw input values.
+
+    Philosophy: only show a feature if the user's value for it is
+    SCIENTIFICALLY contributing to the risk — not just because the model
+    considers it globally important.
+
+    Rules applied:
+      - Smoking        - suppress if Never
+      - Alcohol        - suppress if Never
+      - Processed food - suppress if Never or Rarely
+      - Family history (any) - suppress each one individually if answered No
+      - family_history_load (engineered) - suppress if ALL family histories are No
+      - has_asthma / has_thyroid / has_allergies - suppress if No
+      - Diabetes symptom cluster (frequent_urination, slow_wound_healing,
+        numbness_tingling, diabetes_symptom_count) - suppress all if every
+        individual symptom is No
+      - BMI / bmi_risk_cat / bmi_age_interaction - suppress if BMI is in the
+        healthy range (18.5–22.9, user-specified). Show for underweight and
+        overweight/obese because both genuinely affect health risk.
+      - height_cm / weight_kg - ALWAYS suppressed (BMI represents them).
+      - exercise_level / sedentary_screen_index - suppress only when Moderate
+        or Active. Always show when Sedentary or Light.
+      - eat_veggies_daily / eat_fruits_daily - suppress if value is Yes
+        (eating them is PROTECTIVE; showing them as a risk bar is misleading)
+      - healthy_diet_score - suppress if score >= 2 (reasonably healthy diet)
+      - sleep_deviation - suppress if deviation from 7.5h is <= 1.5h (acceptable range)
+    """
+    suppressed = set()
+    r = raw_input  # shorthand
+
+    # 1. Smoking 
+    if r.get('smoking_status') == 'Never':
+        suppressed.add('smoking_status')
+
+    # 2. Alcohol 
+    if r.get('alcohol_consumption') == 'Never':
+        suppressed.add('alcohol_consumption')
+
+    # 3. Processed food 
+    # Never=0, Rarely=1 are acceptable; only Moderate=2 / Heavy=3 are risk-adding
+    if r.get('eat_processed_food') in ('Never', 'Rarely'):
+        suppressed.add('eat_processed_food')
+
+    # 4. Family history — each field individually 
+    fh_fields = [
+        'family_history_diabetes', 'family_history_heart_disease',
+        'family_history_hypertension', 'family_history_obesity',
+        'family_history_pcos',
+    ]
+    fh_yes_count = 0
+    for fh in fh_fields:
+        val = r.get(fh)
+        if val == 'No' or val == 'N/A' or val is None:
+            suppressed.add(fh)
+        elif val == 'Yes':
+            fh_yes_count += 1
+
+    # family_history_load is the engineered sum of all family histories.
+    # Suppress it unless at least one family history is Yes.
+    if fh_yes_count == 0:
+        suppressed.add('family_history_load')
+
+    # 5. Diagnosed conditions 
+    for cond in ('has_asthma', 'has_thyroid', 'has_allergies'):
+        if r.get(cond) != 'Yes':
+            suppressed.add(cond)
+
+    # 6. Diabetes symptom cluster 
+    # Only show these if the user actually reported the symptom.
+    # diabetes_symptom_count is an engineered sum. suppress it if all are No.
+    symptom_fields = ('frequent_urination', 'slow_wound_healing', 'numbness_tingling')
+    any_symptom = any(r.get(f) == 'Yes' for f in symptom_fields)
+    for f in symptom_fields:
+        if r.get(f) != 'Yes':
+            suppressed.add(f)
+    if not any_symptom:
+        suppressed.add('diabetes_symptom_count')
+
+    # 7. BMI and BMI-derived features 
+    # Healthy range: 18.5–22.9 (user-specified).
+    # Suppress bmi/bmi_risk_cat/bmi_age_interaction only inside this range.
+    # Show for underweight (< 18.5) AND overweight/obese (>= 23) because
+    # both directions are genuine risk contributors.
+    # height_cm and weight_kg are ALWAYS suppressed (BMI already represents them).
+    suppressed.update({'height_cm', 'weight_kg'})
+    bmi_val = r.get('bmi')
     try:
-        # BULLETPROOF ALIGNMENT: SCALER
-        scaler_cols = list(models['cdc_scaler'].feature_names_in_)
-        for col in scaler_cols:
-            if col not in input_df.columns:
-                input_df[col] = 0.0 # Inject dummy if scaler demands it
-                
-        input_df[scaler_cols] = models['cdc_scaler'].transform(input_df[scaler_cols])
-        
-        # BULLETPROOF ALIGNMENT: MODEL (This is what was missing!)
-        model_cols = list(models['diabetes'].feature_names_in_)
-        for col in model_cols:
-            if col not in input_df.columns:
-                input_df[col] = 0.0 # Inject dummy if model demands dropped columns like 'Education'
-        
-        # Filter back down to ONLY the Final Features the Model expects
-        final_df = input_df[model_cols]
-        
-        diab_risk = models['diabetes'].predict_proba(final_df)[0][1]
-        mental_risk = models['mental'].predict_proba(final_df)[0][1]
-        phys_risk = models['physical'].predict_proba(final_df)[0][1]
-        
-        shap_values = models['diab_explainer'].shap_values(final_df)
-        feature_impacts = dict(zip(final_df.columns, shap_values[0]))
-        top_risk_drivers = sorted(feature_impacts.items(), key=lambda x: x[1], reverse=True)[:3]
-        formatted_drivers = [{"feature": k, "impact": round(float(v), 4)} for k, v in top_risk_drivers if v > 0]
-        
-        return {
-            "predictions": {"diabetes": round(float(diab_risk), 4), "mental_health": round(float(mental_risk), 4), "physical_health": round(float(phys_risk), 4)},
-            "explanation": {"message": "Primary factors driving this metabolic risk:", "top_risk_drivers": formatted_drivers}
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"CDC Inference Error: {str(e)}")
+        bmi_float = float(bmi_val)
+        if 18.5 <= bmi_float <= 22.9:
+            suppressed.update({'bmi', 'bmi_risk_cat', 'bmi_age_interaction'})
+    except (TypeError, ValueError):
+        pass
 
-@app.post("/predict/cardio-risk")
-async def predict_cardio_risk(profile: CardioProfile):
-    input_df = pd.DataFrame([profile.model_dump()])
-    
+    # 8. Fruit and vegetable intake 
+    # Eating fruits/veggies daily is PROTECTIVE — suppress from risk chart.
+    if r.get('eat_fruits_daily') == 'Yes':
+        suppressed.add('eat_fruits_daily')
+    if r.get('eat_veggies_daily') == 'Yes':
+        suppressed.add('eat_veggies_daily')
+
+    # 9. Healthy diet score (engineered) 
+    # Compute the same way as the notebook to know if diet is genuinely poor.
+    # Score range: 0–4. Score >= 2 = reasonably healthy → suppress.
     try:
-        # 1. BULLETPROOF THE SCALER
-        scaler_cols = list(models['cardio_scaler'].feature_names_in_)
-        for col in scaler_cols:
-            if col not in input_df.columns:
-                input_df[col] = 0.0 # Inject missing columns (like leaky data) safely
-                
-        input_df[scaler_cols] = models['cardio_scaler'].transform(input_df[scaler_cols])
-        
-        # 2. BULLETPROOF THE MODEL (The Fix)
-        model_cols = list(models['cardio'].feature_names_in_)
-        for col in model_cols:
-            if col not in input_df.columns:
-                input_df[col] = 0.0 # Safely inject 0.0 if the model demands dropped columns like 'education'
-                
-        # Now it is 100% safe to filter
-        final_df = input_df[model_cols]
-        
-        cardio_risk = models['cardio'].predict_proba(final_df)[0][1]
-        return {"predictions": {"cardiovascular_disease": round(float(cardio_risk), 4)}}
+        diet = r.get('diet_type', '')
+        score = (
+            (1 if r.get('eat_fruits_daily')  == 'Yes' else 0) +
+            (1 if r.get('eat_veggies_daily') == 'Yes' else 0) +
+            (1 if r.get('eat_processed_food') in ('Never', 'Rarely') else 0) +
+            (1 if diet in ('Mediterranean', 'Vegetarian', 'Vegan') else 0)
+        )
+        if score >= 2:
+            suppressed.add('healthy_diet_score')
+    except Exception:
+        pass
+
+    # 10. Sleep deviation 
+    # Sleep between 6–9h (deviation from 7.5h <= 1.5h) is acceptable.
+    try:
+        sleep = float(r.get('avg_sleep_hours', 7.5))
+        if abs(sleep - 7.5) <= 1.5:
+            suppressed.add('sleep_deviation')
+    except (TypeError, ValueError):
+        pass
+
+    # 11. Exercise level 
+    # Suppress exercise_level and sedentary_screen_index only when exercise is
+    # genuinely good (Moderate or Active). Sedentary and Light are real risk
+    # contributors and must always be shown when selected.
+    exercise = r.get('exercise_level', '')
+    if exercise in ('Moderate', 'Active'):
+        suppressed.add('exercise_level')
+        suppressed.add('sedentary_screen_index')
+    # Note: 'Sedentary' and 'Light' are deliberately NOT suppressed here.
+
+    return suppressed
+
+
+def _extract_shap_row(sv, row_idx: int = 0) -> np.ndarray:
+    """
+    Extract a 1-D SHAP array for a single prediction row from any SHAP output format.
+
+    GradientBoostingClassifier can return:
+      - list of arrays: one per class  → take class-1 (risk class)
+      - 3-D array (n_samples, n_features, n_classes) → slice [:, :, 1]
+      - 2-D array (n_samples, n_features)            → take row
+    """
+    if isinstance(sv, list):
+        # list of (n_samples, n_features) arrays — index 1 = positive/risk class
+        arr = np.array(sv[1] if len(sv) > 1 else sv[0])
+    else:
+        arr = np.array(sv)
+
+    if arr.ndim == 3:
+        arr = arr[:, :, 1]   # (n, f, c) → (n, f) for risk class
+
+    return arr[row_idx] if arr.ndim == 2 else arr
+
+
+# Features guaranteed to appear when user's value is risky.
+# Rule keys: raw_field, risky_values, features, targets (None=all), min_pts
+# Exercise Level: Risk Matrix Y for all 7 targets, weight 5-12 each.
+# sedentary_screen_index = (3-exercise_ordinal)*screen_time/3 — composite signal.
+GUARANTEED_SHOW: list = [
+    {
+        'raw_field':    'exercise_level',
+        'risky_values': ('Sedentary', 'Light'),
+        'features':     ('exercise_level', 'sedentary_screen_index'),
+        'targets':      None,
+        'min_pts':      1.0,
+    },
+]
+
+
+def _get_per_model_shap(
+    models: dict,
+    pipeline: dict,
+    X_scaled: "pd.DataFrame",
+    raw_input: dict,
+    n: int = 8,
+) -> dict:
+    """
+    To Compute true per sample, per feature SHAP contributions for all 7 models.
+
+    Uses TreeExplainer → shap_values() on the actual preprocessed input row.
+
+    Three-layer filtering + guarantee:
+      1. Threshold of 0.35 pts — captures real contributions at low risk
+         scores (e.g. Sedentary exercise when heart score is 15) while
+         filtering true noise. Guaranteed features bypass this.
+      2. Safe-value suppression: if the user's raw input for a feature matches
+         a scientifically safe/protective value (e.g. smoking=Never, family
+         history=No, BMI in healthy range), that feature is always suppressed
+         even if SHAP leaks a small positive value due to tree interactions.
+      3. Guaranteed-show injection: certain lifestyle features are ALWAYS shown
+         when the user's value is in a known risky range (e.g. exercise=Sedentary),
+         with a minimum impact of 1.0 pt. This prevents genuinely bad habits from
+         being silently dropped by a low SHAP threshold.
+    """
+    import shap as shap_lib
+
+    feature_cols = pipeline["feature_columns"]
+    suppressed   = _build_suppressed_features(raw_input)
+
+    # Build guaranteed sets — all model and per model
+    guaranteed_all: set = set()
+    guaranteed_per: dict = {}
+    for rule in GUARANTEED_SHOW:
+        if raw_input.get(rule['raw_field']) not in rule['risky_values']:
+            continue
+        for f in rule['features']:
+            if f in suppressed:
+                continue
+            if rule['targets'] is None:
+                guaranteed_all.add(f)
+            else:
+                for t in rule['targets']:
+                    guaranteed_per.setdefault(t, set()).add(f)
+
+    result: dict = {}
+
+    for target_col, _ in pipeline["target_configs"]:
+        model = models.get(target_col)
+        if model is None:
+            continue
+
+        # Threshold 0.35 pts: loose enough to capture real contributions
+        # at low risk scores while filtering true noise.
+        # Guaranteed features bypass this via the 1.0 pt floor.
+        threshold   = 0.35
+
+        # Merge global + per-model guaranteed sets
+        guaranteed = guaranteed_all | guaranteed_per.get(target_col, set())
+
+        def _min_pts(feat: str) -> float:
+            for rule in GUARANTEED_SHOW:
+                if feat in rule['features']:
+                    return rule['min_pts']
+            return 1.0
+
+        factors     = []
+        shap_map: dict = {}
+
+        try:
+            explainer   = shap_lib.TreeExplainer(model)
+            shap_values = explainer.shap_values(X_scaled)
+            shap_row    = _extract_shap_row(shap_values, row_idx=0)
+
+            for feat, sv in zip(feature_cols, shap_row):
+                pts = round(float(sv) * 100, 1)
+                shap_map[feat] = pts
+
+            for feat, pts in shap_map.items():
+                if feat in suppressed:
+                    continue
+                if pts < threshold and feat not in guaranteed:
+                    continue
+                if feat in guaranteed and pts < _min_pts(feat):
+                    pts = _min_pts(feat)
+                factors.append({
+                    'feature':       feat,
+                    'impact_points': pts,
+                    'is_modifiable': not _is_non_modifiable(feat),
+                })
+
+            # Inject guaranteed features that SHAP didn't cover at all
+            for feat in guaranteed:
+                if feat in suppressed:
+                    continue
+                if any(f['feature'] == feat for f in factors):
+                    continue
+                if feat in feature_cols:
+                    factors.append({
+                        'feature':       feat,
+                        'impact_points': _min_pts(feat),
+                        'is_modifiable': not _is_non_modifiable(feat),
+                    })
+
+        except Exception:
+            # Fallback: feature_importances_ × risk class probability
+            try:
+                imps   = model.feature_importances_
+                y_prob = model.predict_proba(X_scaled)[0]
+                le     = pipeline["target_encoders"][target_col]
+                risk_prob = max(
+                    (float(y_prob[i]) for i, cls in enumerate(le.classes_)
+                     if cls not in ('Low', 'Poor', 'Excellent')),
+                    default=float(y_prob.max())
+                )
+                for feat, imp in zip(feature_cols, imps):
+                    if feat in suppressed:
+                        continue
+                    pts = round(float(imp) * risk_prob * 100, 1)
+                    if pts < threshold and feat not in guaranteed:
+                        continue
+                    if feat in guaranteed and pts < _min_pts(feat):
+                        pts = _min_pts(feat)
+                    factors.append({
+                        'feature':       feat,
+                        'impact_points': pts,
+                        'is_modifiable': not _is_non_modifiable(feat),
+                    })
+                # Inject guaranteed features missing from fallback
+                for feat in guaranteed:
+                    if feat in suppressed:
+                        continue
+                    if any(f['feature'] == feat for f in factors):
+                        continue
+                    if feat in feature_cols:
+                        factors.append({
+                            'feature':       feat,
+                            'impact_points': _min_pts(feat),
+                            'is_modifiable': not _is_non_modifiable(feat),
+                        })
+            except Exception:
+                pass
+
+        factors.sort(key=lambda x: x["impact_points"], reverse=True)
+        result[target_col] = factors[:n]
+
+    return result
+
+
+# Input schema 
+
+class HealthInput(BaseModel):
+    """
+    All 42 raw features collected by the frontend wizard.
+    Categorical fields are sent as their string labels; encoding happens in the API.
+    """
+    # Numerical 
+    age:                  float = Field(..., ge=18,  le=80)
+    height_cm:            float = Field(..., ge=140, le=200)
+    weight_kg:            float = Field(..., ge=35,  le=180)
+    bmi:                  float = Field(..., ge=14,  le=55)
+    avg_sleep_hours:      float = Field(..., ge=3,   le=12)
+    stress_level:         int   = Field(..., ge=1,   le=10)
+    work_stress:          int   = Field(..., ge=1,   le=10)
+    screen_time_hours:    float = Field(..., ge=0.5, le=18)
+    water_intake_liters:  float = Field(..., ge=0.5, le=5)
+    meal_frequency:       int   = Field(..., ge=1,   le=6)
+    anxiety_level:        int   = Field(..., ge=1,   le=10)
+    fatigue_level:        int   = Field(..., ge=1,   le=10)
+
+    # Categorical (string labels from the form) 
+    gender:                       str = Field(...)
+    exercise_level:               str = Field(...)
+    diet_type:                    str = Field(...)
+    eat_fruits_daily:             str = Field(...)
+    eat_veggies_daily:            str = Field(...)
+    eat_processed_food:           str = Field(...)
+    metabolism_type:              str = Field(...)
+    employment_status:            str = Field(...)
+    work_type:                    str = Field(...)
+    alcohol_consumption:          str = Field(...)
+    smoking_status:               str = Field(...)
+    sun_exposure:                 str = Field(...)
+    social_interaction_level:     str = Field(...)
+    shortness_of_breath:          str = Field(...)
+    frequent_headaches:           str = Field(...)
+    digestive_issues:             str = Field(...)
+    difficulty_falling_asleep:    str = Field(...)
+    perceived_appetite:           str = Field(...)
+    family_history_diabetes:      str = Field(...)
+    family_history_heart_disease: str = Field(...)
+    family_history_hypertension:  str = Field(...)
+    family_history_obesity:       str = Field(...)
+    family_history_pcos:          str = Field(...)
+    has_asthma:                   str = Field(...)
+    has_thyroid:                  str = Field(...)
+    has_allergies:                str = Field(...)
+    frequent_urination:           str = Field(...)
+    slow_wound_healing:           str = Field(...)
+    numbness_tingling:            str = Field(...)
+    menstrual_regularity:         str = Field(...)
+
+
+# Preprocessing: exact mirror of the notebook 
+
+# These mappings are identical to Cell 11 in preprocessing_ml_pipeline.ipynb
+ORDINAL_MAPPINGS = {
+    'exercise_level':           {'Sedentary': 0, 'Light': 1, 'Moderate': 2, 'Active': 3},
+    'eat_processed_food':       {'Never': 0, 'Rarely': 1, 'Moderate': 2, 'Heavy': 3},
+    'shortness_of_breath':      {'Never': 0, 'Rarely': 1, 'Sometimes': 2, 'Often': 3},
+    'difficulty_falling_asleep':{'Never': 0, 'Rarely': 1, 'Sometimes': 2, 'Often': 3},
+    'frequent_headaches':       {'Never': 0, 'Rarely': 1, 'Sometimes': 2, 'Often': 3},
+    'digestive_issues':         {'Never': 0, 'Rarely': 1, 'Sometimes': 2, 'Often': 3},
+    'social_interaction_level': {'Low': 0, 'Moderate': 1, 'High': 2},
+    'metabolism_type':          {'Slow': 0, 'Normal': 1, 'Fast': 2},
+    'perceived_appetite':       {'Low': 0, 'Normal': 1, 'Excessive': 2},
+    'sun_exposure':             {'Low': 0, 'Moderate': 1, 'High': 2},
+    'alcohol_consumption':      {'Never': 0, 'Rarely': 1, 'Moderate': 2, 'Heavy': 3, 'Former': 4},
+    'menstrual_regularity':     {'N/A': -1, 'Regular': 0, 'Irregular': 1, 'Very Irregular': 2},
+}
+
+# These mappings are identical to Cell 12
+BINARY_MAPPINGS = {
+    'eat_fruits_daily':             {'Yes': 1, 'No': 0},
+    'eat_veggies_daily':            {'Yes': 1, 'No': 0},
+    'family_history_diabetes':      {'Yes': 1, 'No': 0},
+    'family_history_heart_disease': {'Yes': 1, 'No': 0},
+    'family_history_hypertension':  {'Yes': 1, 'No': 0},
+    'family_history_obesity':       {'Yes': 1, 'No': 0},
+    'has_asthma':                   {'Yes': 1, 'No': 0},
+    'has_thyroid':                  {'Yes': 1, 'No': 0},
+    'has_allergies':                {'Yes': 1, 'No': 0},
+    'frequent_urination':           {'Yes': 1, 'No': 0},
+    'slow_wound_healing':           {'Yes': 1, 'No': 0},
+    'numbness_tingling':            {'Yes': 1, 'No': 0},
+    'family_history_pcos':          {'Yes': 1, 'No': 0, 'N/A': -1},
+    'smoking_status':               {'Never': 0, 'Former': 1, 'Current': 2},
+}
+
+# Nominal columns one-hot encoded with drop_first=True (Cell 13)
+NOMINAL_COLS = ['gender', 'diet_type', 'employment_status', 'work_type']
+
+# Engineered features (Cell 9)
+EXERCISE_MAP = {'Sedentary': 0, 'Light': 1, 'Moderate': 2, 'Active': 3}
+
+
+def preprocess(inp: HealthInput, pipeline: Dict) -> pd.DataFrame:
+    """
+    Convert a HealthInput object into the exact feature DataFrame that
+    the trained GradientBoosting models expect.
+
+    Steps mirror preprocessing_ml_pipeline.ipynb cells 5–14 exactly.
+    """
+    # 1. Build raw row dict 
+    raw = inp.dict()
+
+    # Handle the 'Omnivore' -> 'Non Vegetarian' rename that was applied to training data
+    # The notebook's Cell 5 renamed 'Omnivore' to 'Non Vegetarian'
+    # The form sends 'Non Vegetarian' directly. so no rename needed here.
+
+    df = pd.DataFrame([raw])
+
+    # 2. Ordinal encoding 
+    for col, mapping in ORDINAL_MAPPINGS.items():
+        if col in df.columns:
+            df[col] = df[col].map(mapping)
+            # If value not in mapping (unknown), use 0 as safe default
+            df[col] = df[col].fillna(0)
+
+    # 3. Binary encoding 
+    for col, mapping in BINARY_MAPPINGS.items():
+        if col in df.columns:
+            df[col] = df[col].map(mapping)
+            df[col] = df[col].fillna(0)
+
+    # 4. One-hot encoding (match training get_dummies with drop_first=True) 
+    df = pd.get_dummies(df, columns=NOMINAL_COLS, drop_first=True, dtype=int)
+
+    # 5. Engineered features (Cell 9) 
+    # 5a. BMI risk category
+    df['bmi_risk_cat'] = pd.cut(df['bmi'],
+        bins=[0, 18.5, 25, 30, 35, 40, 100],
+        labels=[0, 1, 2, 3, 4, 5]).astype(int)
+
+    # 5b. Sleep deviation from optimal 7.5h
+    df['sleep_deviation'] = abs(df['avg_sleep_hours'] - 7.5)
+
+    # 5c. Diabetes symptom count (using already-encoded values)
+    df['diabetes_symptom_count'] = (
+        df.get('frequent_urination', pd.Series([0])).fillna(0).astype(int) +
+        df.get('slow_wound_healing', pd.Series([0])).fillna(0).astype(int) +
+        df.get('numbness_tingling',  pd.Series([0])).fillna(0).astype(int) +
+        # perceived_appetite was encoded: Excessive=2
+        (df.get('perceived_appetite', pd.Series([0])).fillna(0) == 2).astype(int)
+    )
+
+    # 5d. Family history load
+    fh_cols = ['family_history_diabetes', 'family_history_heart_disease',
+               'family_history_hypertension', 'family_history_obesity']
+    df['family_history_load'] = sum(
+        df.get(c, pd.Series([0])).fillna(0).clip(lower=0) for c in fh_cols
+    )
+
+    # 5e. Stress-anxiety composite
+    df['stress_anxiety_composite'] = (
+        df['stress_level'] + df['anxiety_level'] + df['work_stress']
+    ) / 3.0
+
+    # 5f. Healthy diet score (requires original string values — compute from numerics)
+    # eat_fruits_daily=1 (Yes), eat_veggies_daily=1 (Yes)
+    # eat_processed_food Never=0, Rarely=1 -> <=1 counts as healthy
+    # diet_type: Mediterranean/Vegetarian/Vegan -> handled via one-hot cols
+    med_col  = df.get('diet_type_Mediterranean', pd.Series([0])).fillna(0)
+    veg_col  = df.get('diet_type_Vegetarian',    pd.Series([0])).fillna(0)
+    vegan_col= df.get('diet_type_Vegan',         pd.Series([0])).fillna(0)
+    df['healthy_diet_score'] = (
+        df.get('eat_fruits_daily',  pd.Series([0])).fillna(0).astype(int) +
+        df.get('eat_veggies_daily', pd.Series([0])).fillna(0).astype(int) +
+        (df.get('eat_processed_food', pd.Series([0])).fillna(0) <= 1).astype(int) +
+        (med_col + veg_col + vegan_col).clip(upper=1).astype(int)
+    )
+
+    # 5g. Age decade
+    df['age_decade'] = (df['age'] // 10) * 10
+
+    # 5h. BMI × age interaction
+    df['bmi_age_interaction'] = df['bmi'] * np.log1p(df['age'])
+
+    # 5i. Sedentary screen index (exercise_level already encoded as 0-3)
+    ex_num = df.get('exercise_level', pd.Series([1])).fillna(1)
+    df['sedentary_screen_index'] = (3 - ex_num) * df['screen_time_hours'] / 3
+
+    # 5j. Is female reproductive age
+    # gender was one-hot: after drop_first on ['Male','Female','Other']
+    # The base (dropped) category depends on alphabetical order: Female, Male, Other
+    # drop_first=True drops 'Female' → columns are gender_Male, gender_Other
+    # So is_female_reproductive: NOT (gender_Male or gender_Other) AND age <= 50
+    is_male  = df.get('gender_Male',  pd.Series([0])).fillna(0)
+    is_other = df.get('gender_Other', pd.Series([0])).fillna(0)
+    is_female = ((is_male == 0) & (is_other == 0)).astype(int)
+    df['is_female_reproductive'] = (is_female & (df['age'] <= 50)).astype(int)
+
+    # 6. Align columns to training feature set 
+    trained_cols = pipeline['feature_columns']
+
+    # Add any columns that appeared in training but aren't in this row
+    # (can happen for one-hot categories not present in single-row inference)
+    for col in trained_cols:
+        if col not in df.columns:
+            df[col] = 0
+
+    # Reorder to exact training column order, drop any extras
+    df = df[trained_cols]
+
+    # 7. Scale 
+    scaler = pipeline['scaler']
+    X_scaled = scaler.transform(df)
+    return pd.DataFrame(X_scaled, columns=trained_cols)
+
+
+# SHAP helper 
+
+def _extract_shap_class1(sv) -> np.ndarray:
+    """Handle both old (list) and new (3D ndarray) SHAP output formats."""
+    sv_arr = np.array(sv) if not isinstance(sv, np.ndarray) else sv
+    if isinstance(sv, list):
+        sv_arr = np.array(sv[1] if len(sv) > 1 else sv[0])
+    elif sv_arr.ndim == 3:
+        sv_arr = sv_arr[:, :, 1]   # (n, f, c) → (n, f) class-1 slice
+    return sv_arr
+
+
+def get_shap_explanation(model, X_df: pd.DataFrame, feature_cols: List[str], n: int = 8) -> Dict:
+    try:
+        import shap
+        explainer   = shap.TreeExplainer(model)
+        shap_values = explainer.shap_values(X_df)
+        sv = _extract_shap_class1(shap_values)
+        # sv is (1, n_features) for a single sample — take row 0
+        arr = sv[0] if sv.ndim == 2 else sv
+        drivers = sorted(
+            [{"feature": f, "impact": round(abs(float(v)), 5)} for f, v in zip(feature_cols, arr)],
+            key=lambda x: x["impact"], reverse=True,
+        )
+        return {"method": "shap", "top_risk_drivers": drivers[:n]}
+    except ImportError:
+        pass
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Cardio Inference Error: {str(e)}")
+        pass
+    # Fallback: GBM feature importances
+    try:
+        imps = model.feature_importances_
+        drivers = sorted(
+            [{"feature": f, "impact": round(float(v), 5)} for f, v in zip(feature_cols, imps)],
+            key=lambda x: x["impact"], reverse=True,
+        )
+        return {"method": "rf_importance_fallback", "top_risk_drivers": drivers[:n]}
+    except Exception as e2:
+        return {"method": "unavailable", "error": str(e2), "top_risk_drivers": []}
+
+
+# Endpoints 
+
+@app.get("/health")
+async def health():
+    models_loaded  = A.get("models") is not None
+    pipeline_loaded= A.get("pipeline") is not None
+    return {
+        "status":          "healthy" if models_loaded and pipeline_loaded else "degraded",
+        "models_loaded":   models_loaded,
+        "pipeline_loaded": pipeline_loaded,
+        "saved_models_dir":str(SAVED_DIR),
+        "dir_exists":      SAVED_DIR.exists(),
+        "version":         "3.0.0",
+    }
+
+
+@app.post("/predict/risks")
+async def predict_risks(inp: HealthInput):
+    """
+    Run all 7 GradientBoosting models and return level + score for each target.
+    Also returns SHAP explanation (or feature importances as fallback).
+    """
+    for key, name in [("models", "all_models.pkl"), ("pipeline", "preprocessing_pipeline.pkl")]:
+        if A.get(key) is None:
+            raise HTTPException(
+                503,
+                f"'{name}' not loaded. Run preprocessing_ml_pipeline.ipynb first, "
+                f"then check that saved_models/ is at: {SAVED_DIR}"
+            )
+
+    pipeline = A["pipeline"]
+    models   = A["models"]
+
+    # Preprocess 
+    try:
+        X_scaled = preprocess(inp, pipeline)
+    except Exception as e:
+        raise HTTPException(422, f"Preprocessing failed: {str(e)}")
+
+    # Predict all 7 targets 
+    predictions = {}
+    target_configs = pipeline["target_configs"]
+    target_encoders = pipeline["target_encoders"]
+
+    for target_col, _ in target_configs:
+        model = models.get(target_col)
+        if model is None:
+            continue
+
+        le     = target_encoders[target_col]
+        y_pred = model.predict(X_scaled)[0]           # integer class index
+        y_prob = model.predict_proba(X_scaled)[0]     # probabilities per class
+
+        # Decode label
+        level  = le.inverse_transform([y_pred])[0]
+
+        # Weighted risk score 0–100:
+        # For each class, multiply its probability by a severity weight.
+        # Low/Poor=0.15, Medium/Fair=0.50, Good=0.75, High/Excellent=1.0
+        level_weights = {}
+        for cls in le.classes_:
+            if cls in ('Low', 'Poor'):
+                level_weights[cls] = 0.15
+            elif cls in ('Medium', 'Fair'):
+                level_weights[cls] = 0.50
+            elif cls == 'Good':
+                level_weights[cls] = 0.75
+            elif cls in ('High', 'Excellent'):
+                level_weights[cls] = 1.0
+            else:
+                level_weights[cls] = 0.5
+
+        score = sum(
+            float(y_prob[i]) * level_weights.get(cls, 0.5) * 100
+            for i, cls in enumerate(le.classes_)
+        )
+        score = round(float(np.clip(score, 0, 100)), 1)
+
+        score_key = target_col.replace('_level', '_score')
+        predictions[target_col]  = level
+        predictions[score_key]   = score
+
+    # SHAP on the primary model (diabetes) 
+    primary_model = models.get("diabetes_risk_level")
+    explanation = {"method": "unavailable", "top_risk_drivers": []}
+    if primary_model is not None:
+        explanation = get_shap_explanation(
+            primary_model, X_scaled, pipeline["feature_columns"]
+        )
+
+    feature_importances = _get_per_model_shap(models, pipeline, X_scaled, inp.dict())
+
+    return {
+        "status":              "success",
+        "predictions":         predictions,
+        "explanation":         explanation,
+        "feature_importances": feature_importances,
+    }
