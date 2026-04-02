@@ -82,9 +82,9 @@ export default function App() {
       setIsLoading(false);   // hide the normal spinner
       setIsWaking(true);     // show the wake-up overlay
       setWakeProgress(0);
-      // Animate a progress bar over ~55s (typical Render cold start)
+      // Animate a progress bar over ~82s (typical Render cold start)
       const start = Date.now();
-      const DURATION = 55000;
+      const DURATION = 82000;
       const tick = () => {
         const elapsed = Date.now() - start;
         const pct = Math.min(95, Math.round((elapsed / DURATION) * 100));
@@ -192,7 +192,7 @@ export default function App() {
           <div style={s.overlayCard}>
             <div style={s.spinner} />
             <p style={s.spinnerText}>Running 7-model health risk analysis…</p>
-            <p style={s.spinnerSub}>This takes 3–8 seconds on first request.</p>
+            <p style={s.spinnerSub}>Please wait a few seconds.</p>
           </div>
         </div>
       )}
@@ -206,7 +206,7 @@ export default function App() {
             <p style={{ ...s.spinnerText, marginBottom: '6px' }}>Waking up the server…</p>
             <p style={{ ...s.spinnerSub, marginBottom: '24px', lineHeight: 1.6 }}>
               The server went to sleep after a period of inactivity (free tier hosting).
-              <br />This usually takes <strong>30–60 seconds</strong> — hang tight!
+              <br />This usually takes <strong>about a minute</strong> — hang tight!
             </p>
             {/* Progress bar */}
             <div style={s.wakeBarTrack}>
@@ -215,7 +215,7 @@ export default function App() {
             <p style={{ ...s.spinnerSub, marginTop: '10px' }}>
               {wakeProgress < 30  ? 'Starting up…' :
                wakeProgress < 60  ? 'Loading models…' :
-               wakeProgress < 85  ? 'Almost ready…' :
+               wakeProgress < 82  ? 'Almost ready…' :
                'Running analysis…'}
             </p>
           </div>

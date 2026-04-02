@@ -4,7 +4,7 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 const api = axios.create({
   baseURL: API_URL,
-  timeout: 70000,   // 70s — Render free tier cold start can take ~60s
+  timeout: 90000,   // 90s — Render free tier cold start can take ~60s
   headers: {
     'Content-Type': 'application/json',
     'Accept': 'application/json',
@@ -12,11 +12,11 @@ const api = axios.create({
 });
 
 // Separate fast-timeout client just for the wake-up ping.
-// We use 4s — if /health doesn't respond in 4s the server is almost certainly
+// We use 5s — if /health doesn't respond in 5s the server is almost certainly
 // sleeping, and we should show the "Waking up..." UI before the real request.
 const pingApi = axios.create({
   baseURL: API_URL,
-  timeout: 4000,
+  timeout: 5000,
   headers: { 'Accept': 'application/json' },
 });
 
