@@ -1,4 +1,5 @@
 import json
+import os
 import pickle
 import warnings
 from pathlib import Path
@@ -7,9 +8,13 @@ from typing import Any, Dict, List, Literal, Optional
 import numpy as np
 import pandas as pd
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field, validator
+from fastapi.responses import JSONResponse
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from pydantic import BaseModel, Field, field_validator
 
 warnings.filterwarnings("ignore")
 
@@ -27,16 +32,68 @@ SAVED_DIR = ROOT / "saved_models"
 SAVED_DIR.mkdir(parents=True, exist_ok=True)
 
 # App 
+# Disable interactive API docs in production.
+# Set ENVIRONMENT=development in your .env to re-enable during local dev.
+_env = os.getenv("ENVIRONMENT", "production")
+_docs_url    = "/docs"    if _env == "development" else None
+_redoc_url   = "/redoc"   if _env == "development" else None
+_openapi_url = "/openapi.json" if _env == "development" else None
+
 app = FastAPI(
     title="AI Health Coach API v3.0",
     description="7-target health risk prediction using GradientBoosting on synthetic_health_risk_75k",
     version="3.0.0",
+    docs_url=_docs_url,
+    redoc_url=_redoc_url,
+    openapi_url=_openapi_url,
 )
+# Rate limiter — 30 requests per minute per IP on the predict endpoint
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# CORS — never use "*" in production.
+# Set ALLOWED_ORIGINS in your .env file, e.g.:
+#   ALLOWED_ORIGINS=https://your-frontend.vercel.app,http://localhost:5173
+_raw_origins = os.getenv(
+    "ALLOWED_ORIGINS",
+    "http://localhost:5173,http://localhost:3000"   # safe dev default
+)
+ALLOWED_ORIGINS = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000", "*"],
-    allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=False,      # no cookies/auth in Phase 1 — keep False
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type", "Accept"],
 )
+
+# Security headers middleware — adds hardening headers to every response
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"]        = "DENY"
+    response.headers["Referrer-Policy"]        = "strict-origin-when-cross-origin"
+    response.headers["X-XSS-Protection"]       = "1; mode=block"
+    # Restrict what the API response can do in a browser context
+    response.headers["Content-Security-Policy"] = "default-src 'none'"
+    return response
+
+# Request body size limit — reject payloads larger than 64 KB
+MAX_BODY_BYTES = 64 * 1024   # 64 KB — a valid health form JSON is ~2 KB
+
+@app.middleware("http")
+async def limit_body_size(request: Request, call_next):
+    if request.method == "POST":
+        content_length = request.headers.get("content-length")
+        if content_length and int(content_length) > MAX_BODY_BYTES:
+            return JSONResponse(
+                status_code=413,
+                content={"detail": "Request body too large. Maximum allowed is 64 KB."}
+            )
+    return await call_next(request)
 
 # Artifact registry 
 A: Dict[str, Any] = {}   # loaded at startup
@@ -55,18 +112,16 @@ def _load_pkl(name: str) -> Any:
 
 @app.on_event("startup")
 async def startup():
-    print(f"\n🚀 AI Health Coach API v3.0")
-    print(f"   Root:        {ROOT}")
-    print(f"   Saved models:{SAVED_DIR}")
-    print(f"   Exists:      {SAVED_DIR.exists()}")
-
+    print("\n🚀 AI Health Coach API v3.0 — starting up")
+    # Filesystem paths are intentionally not logged to avoid exposing
+    # internal directory structure in cloud log aggregators.
     A["models"]   = _load_pkl("all_models.pkl")
     A["pipeline"] = _load_pkl("preprocessing_pipeline.pkl")
 
     if A["pipeline"]:
         pp = A["pipeline"]
-        print(f"\n   Features:  {len(pp['feature_columns'])}")
-        print(f"   Targets:   {len(pp['target_configs'])}")
+        print(f"   Features loaded: {len(pp['feature_columns'])}")
+        print(f"   Target models:   {len(pp['target_configs'])}")
     print("✅ Startup complete.\n")
 
 
@@ -437,37 +492,45 @@ class HealthInput(BaseModel):
     anxiety_level:        int   = Field(..., ge=1,   le=10)
     fatigue_level:        int   = Field(..., ge=1,   le=10)
 
-    # Categorical (string labels from the form) 
-    gender:                       str = Field(...)
-    exercise_level:               str = Field(...)
-    diet_type:                    str = Field(...)
-    eat_fruits_daily:             str = Field(...)
-    eat_veggies_daily:            str = Field(...)
-    eat_processed_food:           str = Field(...)
-    metabolism_type:              str = Field(...)
-    employment_status:            str = Field(...)
-    work_type:                    str = Field(...)
-    alcohol_consumption:          str = Field(...)
-    smoking_status:               str = Field(...)
-    sun_exposure:                 str = Field(...)
-    social_interaction_level:     str = Field(...)
-    shortness_of_breath:          str = Field(...)
-    frequent_headaches:           str = Field(...)
-    digestive_issues:             str = Field(...)
-    difficulty_falling_asleep:    str = Field(...)
-    perceived_appetite:           str = Field(...)
-    family_history_diabetes:      str = Field(...)
-    family_history_heart_disease: str = Field(...)
-    family_history_hypertension:  str = Field(...)
-    family_history_obesity:       str = Field(...)
-    family_history_pcos:          str = Field(...)
-    has_asthma:                   str = Field(...)
-    has_thyroid:                  str = Field(...)
-    has_allergies:                str = Field(...)
-    frequent_urination:           str = Field(...)
-    slow_wound_healing:           str = Field(...)
-    numbness_tingling:            str = Field(...)
-    menstrual_regularity:         str = Field(...)
+    # Categorical — each field is restricted to its exact allowed values.
+    # Any value outside these sets is rejected with a 422 before it reaches
+    # the preprocessing pipeline, preventing silent garbage-in outputs.
+    gender:                       Literal["Male", "Female", "Other"]
+    exercise_level:               Literal["Sedentary", "Light", "Moderate", "Active"]
+    diet_type:                    Literal["Omnivore", "Non Vegetarian", "Vegetarian", "Vegan",
+                                          "Pescatarian", "Keto/Low-carb", "Mediterranean",
+                                          "Junk-food-heavy"]
+    eat_fruits_daily:             Literal["Yes", "No"]
+    eat_veggies_daily:            Literal["Yes", "No"]
+    eat_processed_food:           Literal["Never", "Rarely", "Moderate", "Heavy"]
+    metabolism_type:              Literal["Slow", "Normal", "Fast"]
+    employment_status:            Literal["Student", "Employed", "Unemployed",
+                                          "Self-Employed", "Retired"]
+    work_type:                    Literal["Desk/Office", "Manual Labor", "Healthcare",
+                                          "Creative", "Retail/Service", "Remote/WFH",
+                                          "Field Work", "Student", "Homemaker",
+                                          "Retired", "Unemployed/None"]
+    alcohol_consumption:          Literal["Never", "Rarely", "Moderate", "Heavy", "Former"]
+    smoking_status:               Literal["Never", "Former", "Current"]
+    sun_exposure:                 Literal["Low", "Moderate", "High"]
+    social_interaction_level:     Literal["Low", "Moderate", "High"]
+    shortness_of_breath:          Literal["Never", "Rarely", "Sometimes", "Often"]
+    frequent_headaches:           Literal["Never", "Rarely", "Sometimes", "Often"]
+    digestive_issues:             Literal["Never", "Rarely", "Sometimes", "Often"]
+    difficulty_falling_asleep:    Literal["Never", "Rarely", "Sometimes", "Often"]
+    perceived_appetite:           Literal["Low", "Normal", "Excessive"]
+    family_history_diabetes:      Literal["Yes", "No"]
+    family_history_heart_disease: Literal["Yes", "No"]
+    family_history_hypertension:  Literal["Yes", "No"]
+    family_history_obesity:       Literal["Yes", "No"]
+    family_history_pcos:          Literal["Yes", "No", "N/A"]
+    has_asthma:                   Literal["Yes", "No"]
+    has_thyroid:                  Literal["Yes", "No"]
+    has_allergies:                Literal["Yes", "No"]
+    frequent_urination:           Literal["Yes", "No"]
+    slow_wound_healing:           Literal["Yes", "No"]
+    numbness_tingling:            Literal["Yes", "No"]
+    menstrual_regularity:         Literal["Regular", "Irregular", "Very Irregular", "N/A"]
 
 
 # Preprocessing: exact mirror of the notebook 
@@ -672,20 +735,18 @@ def get_shap_explanation(model, X_df: pd.DataFrame, feature_cols: List[str], n: 
 
 @app.get("/health")
 async def health():
-    models_loaded  = A.get("models") is not None
-    pipeline_loaded= A.get("pipeline") is not None
+    models_loaded   = A.get("models") is not None
+    pipeline_loaded = A.get("pipeline") is not None
+    # Do NOT expose filesystem paths, directory structure, or internal layout.
     return {
-        "status":          "healthy" if models_loaded and pipeline_loaded else "degraded",
-        "models_loaded":   models_loaded,
-        "pipeline_loaded": pipeline_loaded,
-        "saved_models_dir":str(SAVED_DIR),
-        "dir_exists":      SAVED_DIR.exists(),
-        "version":         "3.0.0",
+        "status":  "healthy" if models_loaded and pipeline_loaded else "degraded",
+        "version": "3.0.0",
     }
 
 
 @app.post("/predict/risks")
-async def predict_risks(inp: HealthInput):
+@limiter.limit("30/minute")
+async def predict_risks(request: Request, inp: HealthInput):
     """
     Run all 7 GradientBoosting models and return level + score for each target.
     Also returns SHAP explanation (or feature importances as fallback).
@@ -694,8 +755,8 @@ async def predict_risks(inp: HealthInput):
         if A.get(key) is None:
             raise HTTPException(
                 503,
-                f"'{name}' not loaded. Run preprocessing_ml_pipeline.ipynb first, "
-                f"then check that saved_models/ is at: {SAVED_DIR}"
+                f"Service temporarily unavailable: model '{name}' not loaded. "
+                "Please try again later or contact support."
             )
 
     pipeline = A["pipeline"]
@@ -705,7 +766,7 @@ async def predict_risks(inp: HealthInput):
     try:
         X_scaled = preprocess(inp, pipeline)
     except Exception as e:
-        raise HTTPException(422, f"Preprocessing failed: {str(e)}")
+        raise HTTPException(422, "Invalid input data. Please check all fields and try again.")
 
     # Predict all 7 targets 
     predictions = {}

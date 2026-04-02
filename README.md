@@ -101,7 +101,7 @@ This project follows a phase wise development:
 * ✅ Integrate backend API to process inputs
 * ✅ Generate risk predictions from the backend
 * ✅ Display predictions on the frontend
-* ✅ Fine Tune Prediction Models (In Progress)
+* ✅ Fine Tune Prediction Models
 * ✅ Implement Explainable AI using SHAP for risk interpretation
 
 2. **Phase 2: (Current Phase)** 

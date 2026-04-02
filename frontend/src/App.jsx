@@ -50,13 +50,8 @@ export default function App() {
       setFeatureImportances(res.feature_importances || {});
       setView('dashboard');
     } catch (e) {
-      const detail = e?.response?.data?.detail;
-      if (Array.isArray(detail)) {
-        const msgs = detail.map(d => `${d.loc?.slice(1).join(' → ')}: ${d.msg}`).join(' | ');
-        setError(`Validation error — ${msgs}`);
-      } else {
-        setError(detail || 'Cannot reach the API. Is FastAPI running on port 8000?');
-      }
+      // api.js already sanitises all errors into clean user-facing messages.
+      setError(e.message || 'Something went wrong. Please try again.');
     } finally {
       setIsLoading(false);
     }

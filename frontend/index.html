@@ -4,7 +4,35 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>frontend</title>
+
+    <!--
+      Content-Security-Policy:
+      - default-src 'self'          : only load resources from our own origin
+      - script-src 'self'           : no inline scripts, no eval
+      - style-src 'self' 'unsafe-inline' : inline styles are used by React components
+      - img-src 'self' data:        : allow data: URIs for SVG gauges
+      - connect-src 'self' + API    : only allow fetch/XHR to our own origin and API
+      - font-src 'self'             : no external font CDNs
+      - object-src 'none'           : block Flash / plugins
+      - frame-ancestors 'none'      : no framing (same as X-Frame-Options DENY)
+      
+      IMPORTANT: Replace the connect-src placeholder with your actual deployed
+      API URL before going to production, e.g.:
+        connect-src 'self' https://your-api.onrender.com
+    -->
+    <meta http-equiv="Content-Security-Policy"
+          content="
+            default-src 'self';
+            script-src 'self';
+            style-src 'self' 'unsafe-inline';
+            img-src 'self' data: blob:;
+            connect-src 'self' http://127.0.0.1:8000 http://localhost:8000 REPLACE_WITH_YOUR_API_URL;
+            font-src 'self';
+            object-src 'none';
+            frame-ancestors 'none';
+          " />
+
+    <title>AI Health Coach</title>
   </head>
   <body>
     <div id="root"></div>
