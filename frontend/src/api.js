@@ -1,11 +1,6 @@
 import axios from 'axios';
 
-// API URL is read from the environment variable VITE_API_URL.
-// For local development, create a .env file in the frontend/ directory:
-//   VITE_API_URL=http://127.0.0.1:8000
-// For production, set VITE_API_URL in your Vercel/Netlify environment variables
-// to your deployed backend URL (e.g. https://your-api.onrender.com).
-const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 const api = axios.create({
   baseURL: API_URL,
