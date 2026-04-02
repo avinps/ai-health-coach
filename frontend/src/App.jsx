@@ -254,14 +254,14 @@ export default function App() {
         {view === 'plan-ready' && planAnswers && (
           <div style={pr.wrap}>
             <div style={pr.iconWrap}></div>
-            <h2 style={pr.title}>Your preferences have been saved!</h2>
+            <h2 style={pr.title}>Plan generation coming soon!</h2>
             <p style={pr.sub}>
-              Plan generation is coming in the next phase. Your full profile including all 7 risk scores and your goals is stored and ready.
+              Plan generation along with additional interesting features like Multi-user support with secure login, personalized health tracking, AI-based user clustering, customized meal & workout plans, adaptive recommendations, progress tracking, and an intelligent AI health assistant will be available in the future updates. Stay tuned!
             </p>
 
             {/* Summary of what was collected */}
             <div style={pr.summaryCard}>
-              <h3 style={pr.summaryTitle}>What we collected</h3>
+              <h3 style={pr.summaryTitle}>Your Inputs</h3>
               <div style={pr.grid}>
                 {[
                   { label: 'Location',          value: `${planAnswers.state}, ${planAnswers.country}` },

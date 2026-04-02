@@ -5,7 +5,8 @@
 ## Project Overview
 The AI Health Coach is an end-to-end, adaptive machine learning pipeline designed to move beyond static, rule-based health tracking (like generic BMI calculators). It utilizes a multi-layered ML architecture to predict specific metabolic and cardiovascular risks, cluster users into behavioral phenotypes, and generate medically-bounded, dynamic lifestyle interventions.
 
-**⏳ Currently in active development (Phase 2). The App will be deployed after completion of Phase 2**
+### The Phase 1 of this App is live at [HERE](https://ai-healthcoach.vercel.app "Visit App").
+### ⏳ Currently in active development (Phase 2).
 
 ## 🚀 Tech Stack
 
