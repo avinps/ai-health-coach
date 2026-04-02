@@ -240,11 +240,28 @@ function validateStep(step, form, bmi) {
 }
 
 // Main component
-export default function UnifiedForm({ onSubmit, isLoading }) {
-  const [step,   setStep]   = useState(1);
-  const [form,   setForm]   = useState(INITIAL);
-  const [errors, setErrors] = useState({});
-  const [bmi,    setBmi]    = useState(null);
+export default function UnifiedForm({ onSubmit, isLoading, demoData }) {
+  const [step,       setStep]     = useState(1);
+  const [form,       setForm]     = useState(INITIAL);
+  const [errors,     setErrors]   = useState({});
+  const [bmi,        setBmi]      = useState(null);
+  const [isDemoMode, setIsDemoMode] = useState(false);
+
+  // Pre-fill every field from demoData and jump straight to step 1
+  const applyDemo = () => {
+    if (!demoData) return;
+    setForm({ ...INITIAL, ...demoData });
+    setIsDemoMode(true);
+    setErrors({});
+    setStep(1);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  // Clearing demo mode when user edits any field
+  const set = (key, val) => {
+    setForm(f => ({ ...f, [key]: val }));
+    if (isDemoMode) setIsDemoMode(false);
+  };
 
   // Derive BMI whenever height/weight change
   useEffect(() => {
@@ -257,7 +274,7 @@ export default function UnifiedForm({ onSubmit, isLoading }) {
     }
   }, [form.height_cm, form.weight_kg]);
 
-  const set = (key, val) => setForm(f => ({ ...f, [key]: val }));
+
 
   const goNext = () => {
     const errs = validateStep(step, form, bmi);
@@ -360,14 +377,38 @@ export default function UnifiedForm({ onSubmit, isLoading }) {
   return (
     <div style={{ maxWidth: '820px', margin: '0 auto' }}>
 
-      <div style={{ textAlign: 'center', marginBottom: '32px' }}>
+      <div style={{ textAlign: 'center', marginBottom: '24px' }}>
         <h2 style={{ fontSize: '26px', fontWeight: 800, color: '#0f172a', margin: '0 0 8px' }}>
           Build your health profile
         </h2>
-        <p style={{ color: '#64748b', fontSize: '15px', margin: 0 }}>
+        <p style={{ color: '#64748b', fontSize: '15px', margin: '0 0 20px' }}>
           {TOTAL_STEPS} quick steps · All 42 health indicators · Your data stays private
         </p>
+        {/* Demo mode button — only shown when demoData is available */}
+        {demoData && (
+          <button type="button" onClick={applyDemo} style={demoBtn.btn}>
+            <span style={{ fontSize: '16px' }}>⚡</span>
+            Try Demo Mode
+            <span style={demoBtn.badge}>Pre-fills all 42 fields</span>
+          </button>
+        )}
       </div>
+
+      {/* Demo mode active banner */}
+      {isDemoMode && (
+        <div style={demoBtn.banner}>
+          <span style={{ fontSize: '18px' }}>🧪</span>
+          <div style={{ flex: 1 }}>
+            <strong>Demo Mode active</strong> — this is a sample profile of a 38-year-old
+            male desk worker with moderate health risks.
+            Edit any field to switch to your own data.
+          </div>
+          <button onClick={() => { setForm(INITIAL); setIsDemoMode(false); setStep(1); }}
+                  style={demoBtn.clearBtn}>
+            Clear
+          </button>
+        </div>
+      )}
 
       <StepBar current={step} total={TOTAL_STEPS} labels={STEP_LABELS} />
 
@@ -647,6 +688,21 @@ export default function UnifiedForm({ onSubmit, isLoading }) {
     </div>
   );
 }
+
+const demoBtn = {
+  btn:      { display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '11px 22px',
+              background: 'linear-gradient(135deg, #1e3a5f, #2563eb)', color: 'white',
+              border: 'none', borderRadius: '10px', cursor: 'pointer', fontSize: '14px',
+              fontWeight: 700, boxShadow: '0 4px 14px rgba(37,99,235,0.3)' },
+  badge:    { background: 'rgba(255,255,255,0.2)', padding: '2px 9px', borderRadius: '999px',
+              fontSize: '11px', fontWeight: 600, letterSpacing: '0.2px' },
+  banner:   { display: 'flex', alignItems: 'center', gap: '12px', background: '#eff6ff',
+              border: '1px solid #bfdbfe', borderRadius: '10px', padding: '12px 18px',
+              marginBottom: '20px', fontSize: '13px', color: '#1e40af', lineHeight: 1.5 },
+  clearBtn: { padding: '6px 14px', background: 'white', color: '#3b82f6',
+              border: '1px solid #bfdbfe', borderRadius: '7px', cursor: 'pointer',
+              fontSize: '12px', fontWeight: 600, flexShrink: 0 },
+};
 
 const nav = {
   back:   { padding: '13px 22px', background: 'white', color: '#475569', border: '1px solid #cbd5e1', borderRadius: '10px', cursor: 'pointer', fontWeight: 600, fontSize: '14px' },

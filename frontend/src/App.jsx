@@ -2,7 +2,37 @@ import React, { useState, useCallback } from 'react';
 import UnifiedForm        from './components/UnifiedForm';
 import Dashboard          from './components/Dashboard';
 import PlanQuestionnaire  from './components/PlanQuestionnaire';
-import { healthAPI } from './api';
+import { healthAPI, checkServerAwake } from './api';
+
+// ── Demo profile — pre-fills all 44 form fields with a realistic sample ────
+// 38-year-old male desk worker. Mixed risk: overweight, sedentary, moderate stress,
+// family history of diabetes & hypertension, former smoker. Shows meaningful xAI.
+const DEMO_PROFILE = {
+  // Step 1 — Demographics
+  age: '38', gender: 'Male', height_cm: '175', weight_kg: '84',
+  // Step 2 — Lifestyle
+  exercise_level: 'Sedentary', avg_sleep_hours: '6', stress_level: '7',
+  diet_type: 'Non Vegetarian', eat_fruits_daily: 'No', eat_veggies_daily: 'Yes',
+  eat_processed_food: 'Moderate', water_intake_liters: '1.5',
+  meal_frequency: '3', metabolism_type: 'Normal',
+  // Step 3 — Work & Habits
+  employment_status: 'Employed', work_type: 'Desk/Office', work_stress: '7',
+  alcohol_consumption: 'Rarely', smoking_status: 'Former',
+  screen_time_hours: '9', sun_exposure: 'Low',
+  // Step 4 — Medical & Family History
+  family_history_diabetes: 'Yes', family_history_heart_disease: 'No',
+  family_history_hypertension: 'Yes', family_history_obesity: 'No',
+  family_history_pcos: 'N/A',
+  has_asthma: 'No', has_thyroid: 'No', has_allergies: 'Yes',
+  has_diabetes: 'No', has_heart_disease: 'No', has_hypertension: 'No',
+  // Step 5 — Symptoms & Mental Health
+  fatigue_level: '6', anxiety_level: '6',
+  social_interaction_level: 'Moderate', shortness_of_breath: 'Rarely',
+  frequent_headaches: 'Sometimes', digestive_issues: 'Rarely',
+  difficulty_falling_asleep: 'Sometimes', perceived_appetite: 'Normal',
+  frequent_urination: 'No', slow_wound_healing: 'No', numbness_tingling: 'No',
+  menstrual_regularity: 'N/A',
+};
 
 // Views: 'form' | 'dashboard' | 'questionnaire' | 'plan-ready'
 export default function App() {
@@ -27,6 +57,10 @@ export default function App() {
   // so it can enforce goal-weight constraints and compute ideal weight
   const [userProfile, setUserProfile] = useState({ weight_kg: null, height_cm: null });
 
+  // Cold-start detection — true when we're waiting for Render to wake up
+  const [isWaking,      setIsWaking]      = useState(false);
+  const [wakeProgress,  setWakeProgress]  = useState(0);
+
   // Phase 3 — plan preferences (stored for later plan generation)
   const [planAnswers, setPlanAnswers] = useState(null);
 
@@ -43,17 +77,35 @@ export default function App() {
       weight_kg: formPayload.weight_kg ?? null,
       height_cm: formPayload.height_cm ?? null,
     });
+    // Called by api.js when the 4s ping times out (server is cold-starting)
+    const onWaking = () => {
+      setIsLoading(false);   // hide the normal spinner
+      setIsWaking(true);     // show the wake-up overlay
+      setWakeProgress(0);
+      // Animate a progress bar over ~55s (typical Render cold start)
+      const start = Date.now();
+      const DURATION = 55000;
+      const tick = () => {
+        const elapsed = Date.now() - start;
+        const pct = Math.min(95, Math.round((elapsed / DURATION) * 100));
+        setWakeProgress(pct);
+        if (pct < 95) requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    };
+
     try {
-      const res = await healthAPI.predictRisks(formPayload);
+      const res = await healthAPI.predictRisks(formPayload, onWaking);
       setPredictions(res.predictions);
       setExplanation(res.explanation);
       setFeatureImportances(res.feature_importances || {});
       setView('dashboard');
     } catch (e) {
-      // api.js already sanitises all errors into clean user-facing messages.
       setError(e.message || 'Something went wrong. Please try again.');
     } finally {
       setIsLoading(false);
+      setIsWaking(false);
+      setWakeProgress(0);
     }
   }, []);
 
@@ -86,6 +138,8 @@ export default function App() {
     setFeatureImportances({});
     setExistingConditions({});
     setError(null);
+    setIsWaking(false);
+    setWakeProgress(0);
   };
 
   // Step indicator config per view 
@@ -132,8 +186,8 @@ export default function App() {
         </div>
       )}
 
-      {/* Loading overlay */}
-      {isLoading && (
+      {/* Normal loading overlay */}
+      {isLoading && !isWaking && (
         <div style={s.overlay}>
           <div style={s.overlayCard}>
             <div style={s.spinner} />
@@ -143,11 +197,36 @@ export default function App() {
         </div>
       )}
 
+      {/* Cold-start / waking overlay — shown when Render free tier is sleeping */}
+      {isWaking && (
+        <div style={s.overlay}>
+          <div style={{ ...s.overlayCard, maxWidth: '440px', width: '90%' }}>
+            {/* Moon + zZZ animation */}
+            <div style={{ fontSize: '52px', marginBottom: '16px', lineHeight: 1 }}>🌙</div>
+            <p style={{ ...s.spinnerText, marginBottom: '6px' }}>Waking up the server…</p>
+            <p style={{ ...s.spinnerSub, marginBottom: '24px', lineHeight: 1.6 }}>
+              The server went to sleep after a period of inactivity (free tier hosting).
+              <br />This usually takes <strong>30–60 seconds</strong> — hang tight!
+            </p>
+            {/* Progress bar */}
+            <div style={s.wakeBarTrack}>
+              <div style={{ ...s.wakeBarFill, width: `${wakeProgress}%` }} />
+            </div>
+            <p style={{ ...s.spinnerSub, marginTop: '10px' }}>
+              {wakeProgress < 30  ? 'Starting up…' :
+               wakeProgress < 60  ? 'Loading models…' :
+               wakeProgress < 85  ? 'Almost ready…' :
+               'Running analysis…'}
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Content */}
       <main style={s.main}>
 
         {view === 'form' && (
-          <UnifiedForm onSubmit={handleAnalyse} isLoading={isLoading} />
+          <UnifiedForm onSubmit={handleAnalyse} isLoading={isLoading} demoData={DEMO_PROFILE} />
         )}
 
         {view === 'dashboard' && predictions && (
@@ -224,6 +303,10 @@ export default function App() {
 
       <style>{`
         @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes zFloat {
+          0%, 100% { transform: translateY(0) scale(1); opacity: 0.7; }
+          50%       { transform: translateY(-8px) scale(1.1); opacity: 1; }
+        }
       `}</style>
     </div>
   );
@@ -251,6 +334,8 @@ const s = {
   spinnerText: { color: '#0f172a', fontSize: '17px', fontWeight: 600, margin: '0 0 8px' },
   spinnerSub:  { color: '#94a3b8', fontSize: '13px', margin: 0 },
   main:        { maxWidth: '1060px', margin: '0 auto', padding: '40px 24px' },
+  wakeBarTrack:{ height: '8px', background: '#e2e8f0', borderRadius: '999px', overflow: 'hidden', width: '100%' },
+  wakeBarFill: { height: '100%', background: 'linear-gradient(90deg, #6366f1, #8b5cf6)', borderRadius: '999px', transition: 'width 0.4s ease' },
 };
 
 // Plan ready screen styles
