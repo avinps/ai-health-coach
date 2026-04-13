@@ -206,7 +206,7 @@ export default function App() {
             <p style={{ ...s.spinnerText, marginBottom: '6px' }}>Waking up the server…</p>
             <p style={{ ...s.spinnerSub, marginBottom: '24px', lineHeight: 1.6 }}>
               The server went to sleep after a period of inactivity (free tier hosting).
-              <br />This usually takes <strong>about a minute</strong> — hang tight!
+              <br />This usually takes <strong> a minute</strong> — hang tight!
             </p>
             {/* Progress bar */}
             <div style={s.wakeBarTrack}>
@@ -215,7 +215,7 @@ export default function App() {
             <p style={{ ...s.spinnerSub, marginTop: '10px' }}>
               {wakeProgress < 30  ? 'Starting up…' :
                wakeProgress < 60  ? 'Loading models…' :
-               wakeProgress < 82  ? 'Almost ready…' :
+               wakeProgress < 90  ? 'Almost ready few more seconds…' :
                'Running analysis…'}
             </p>
           </div>

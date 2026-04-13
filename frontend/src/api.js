@@ -4,7 +4,7 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 const api = axios.create({
   baseURL: API_URL,
-  timeout: 90000,   // 90s — Render free tier cold start can take ~60s
+  timeout: 120000,   // 120s — Render free tier cold start can take ~60s
   headers: {
     'Content-Type': 'application/json',
     'Accept': 'application/json',
@@ -16,7 +16,7 @@ const api = axios.create({
 // sleeping, and we should show the "Waking up..." UI before the real request.
 const pingApi = axios.create({
   baseURL: API_URL,
-  timeout: 5000,
+  timeout: 10000,
   headers: { 'Accept': 'application/json' },
 });
 
@@ -74,11 +74,11 @@ function sanitiseError(error) {
 
   if (error.request) {
     // Request was made but no response received (network issue / CORS / timeout)
-    throw new Error('Cannot reach the server. Please check your connection and try again.');
+    throw new Error('Cannot reach the server. Please try again.');
   }
 
   // Something else went wrong setting up the request
-  throw new Error('An unexpected error occurred. Please refresh and try again.');
+  throw new Error('An unexpected error occurred. Please try again.');
 }
 
 export const healthAPI = {
