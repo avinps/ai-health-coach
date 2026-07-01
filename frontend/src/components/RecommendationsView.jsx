@@ -1,16 +1,13 @@
 import React from 'react';
 
-/**
- * RecommendationsView — risk-reduction guidance.
- *
- * Renders the /generate/recommendations response:
- *   { summary, recommendations: { foods, exercise, lifestyle }, disclaimer }
- * Each category splits into a positive column (eat / do) and an avoid column.
- * Every item can carry `targets` — the risk areas it helps — shown as chips so
- * the user can see WHY each suggestion is on their list (the explanation→action tie).
- */
+// shows the risk reduction guidance.
+// renders the /generate/recommendations response:
+//   { summary, recommendations: { foods, exercise, lifestyle }, disclaimer }
+// each category has a positive column (eat / do) and an avoid column.
+// each item can carry targets, the risk areas it helps, shown as little chips so
+// the user can see why a suggestion is on their list.
 
-// Stable colour per risk area for the target chips.
+// colour per risk area for the target chips
 const TARGET_COLORS = {
   'diabetes':            { bg: '#eef2ff', fg: '#4338ca' },
   'heart disease':       { bg: '#fef2f2', fg: '#b91c1c' },
@@ -97,7 +94,7 @@ export default function RecommendationsView({ data, onBack, onReset }) {
 
   return (
     <div style={st.wrap}>
-      {/* Summary — the human-readable SHAP interpretation */}
+      {/* summary, the human readable shap interpretation */}
       <div style={st.summaryCard}>
         <div style={st.summaryHead}>
           <span style={st.summaryIcon}>🎯</span>

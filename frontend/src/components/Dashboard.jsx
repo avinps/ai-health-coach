@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 
-// Risk tile configuration (3-3-1 layout order)
+// risk tile setup, 3-3-1 layout order
 const ROW1 = [
   { key: 'diabetes_risk_level',        scoreKey: 'diabetes_risk_score',        label: 'Diabetes',           desc: 'Type 2 Diabetes risk' },
   { key: 'heart_disease_risk_level',   scoreKey: 'heart_disease_risk_score',   label: 'Heart Disease',      desc: 'Cardiovascular risk' },
@@ -16,14 +16,14 @@ const ROW3 = [
 ];
 const ALL_TILES = [...ROW1, ...ROW2, ...ROW3];
 
-// Which form existing-condition fields map to which tile keys
+// which form condition fields map to which tile
 const EXISTING_MAP = {
   diabetes_risk_level:      'has_diabetes',
   heart_disease_risk_level: 'has_heart_disease',
   hypertension_risk_level:  'has_hypertension',
 };
 
-// Human readable feature labels
+// nicer names for the features
 const FEATURE_LABELS = {
   bmi: 'BMI', bmi_risk_cat: 'BMI Category', age: 'Age', age_decade: 'Age Group',
   exercise_level: 'Exercise Level', avg_sleep_hours: 'Sleep Hours',
@@ -59,7 +59,7 @@ function getLabel(feature) {
   return feature.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
 
-// Colour helpers 
+// colour helpers
 function levelColor(level, inverted) {
   if (inverted) {
     if (level === 'Excellent' || level === 'Good') return '#22c55e';
@@ -82,7 +82,7 @@ function levelBg(level, inverted) {
   return '#fef2f2';
 }
 
-// Small half circle gauge (used inside tile)
+// small half circle gauge used inside a tile
 function MiniGauge({ score, color, size }) {
   const sz   = size || 110;
   const pct  = Math.min(100, Math.round(score || 0));
@@ -99,7 +99,7 @@ function MiniGauge({ score, color, size }) {
   );
 }
 
-// Large half circle gauge (used in modal)
+// big half circle gauge used in the modal
 function LargeGauge({ score, color, icon }) {
   const pct  = Math.min(100, Math.round(score || 0));
   const r    = 70;
@@ -116,7 +116,7 @@ function LargeGauge({ score, color, icon }) {
   );
 }
 
-// xAI SVG bar chart
+// xai svg bar chart
 function XAIBarChart({ factors }) {
   if (!factors || factors.length === 0) {
     return (
@@ -193,13 +193,13 @@ function XAIBarChart({ factors }) {
 
       <text x={LABEL_W + CHART_W / 2} y={SVG_H - 4} textAnchor="middle"
             fill="rgba(255,255,255,0.35)" fontSize="10.5" fontStyle="italic">
-        Impact on Risk Score (Points) — Lower is Better, Higher is Worse
+        Impact on Risk Score (Points) - Lower is Better, Higher is Worse
       </text>
     </svg>
   );
 }
 
-// xAI Modal
+// xai modal
 function XAIModal({ tile, score, level, factors, existingCondition, onClose }) {
   var color    = existingCondition ? '#f97316' : levelColor(level, tile.inverted);
   var modFacs  = (factors || []).filter(function(f) { return  f.is_modifiable; });
@@ -217,9 +217,9 @@ function XAIModal({ tile, score, level, factors, existingCondition, onClose }) {
   } else if (level === 'Low' || level === 'Excellent' || level === 'Good') {
     summaryText = 'Your ' + tile.label.toLowerCase() + ' is well-managed.' + (topMod.length > 0 ? ' The main contributors are ' + topMod.join(' and ') + '. ' : ' ') + 'Maintaining your current habits keeps this risk low.';
   } else if (level === 'Medium' || level === 'Fair') {
-    summaryText = 'Moderate ' + tile.label.toLowerCase() + ' risk detected. Your biggest leverage points are ' + topMod.join(', ') + (topNon.length ? ' — while ' + topNon.join(' and ') + ' are non-modifiable factors also at play' : '') + '. Small consistent improvements can meaningfully shift your score.';
+    summaryText = 'Moderate ' + tile.label.toLowerCase() + ' risk detected. Your biggest leverage points are ' + topMod.join(', ') + (topNon.length ? ' - while ' + topNon.join(' and ') + ' are non-modifiable factors also at play' : '') + '. Small consistent improvements can meaningfully shift your score.';
   } else {
-    summaryText = 'High ' + tile.label.toLowerCase() + ' risk flagged. Prioritise ' + topMod.join(', ') + ' — these are within your control.' + (topNon.length ? ' Note that ' + topNon.join(' and ') + ' are non-modifiable but important context.' : '') + ' A healthcare provider review is recommended.';
+    summaryText = 'High ' + tile.label.toLowerCase() + ' risk flagged. Prioritise ' + topMod.join(', ') + ' - these are within your control.' + (topNon.length ? ' Note that ' + topNon.join(' and ') + ' are non-modifiable but important context.' : '') + ' A healthcare provider review is recommended.';
   }
 
   return (
@@ -286,7 +286,7 @@ function XAIModal({ tile, score, level, factors, existingCondition, onClose }) {
   );
 }
 
-// Risk Tile 
+// risk tile
 function RiskTile({ tile, score, level, onClick, existingCondition, wide }) {
   var isWide = wide || false;
   var [hovered, setHovered] = useState(false);
@@ -351,7 +351,7 @@ function RiskTile({ tile, score, level, onClick, existingCondition, wide }) {
   );
 }
 
-// Beautiful Summary Banner
+// summary banner
 function SummaryBanner({ highCount, medCount, wellnessLvl }) {
   var allGood = highCount === 0 && medCount === 0;
   var hasHigh = highCount > 0;
@@ -399,7 +399,7 @@ function SummaryBanner({ highCount, medCount, wellnessLvl }) {
   );
 }
 
-// Priority concern messages
+// priority concern messages
 var CONCERN_MSGS = {
   diabetes_risk_level:      { High: 'Multiple diabetes risk factors detected. A fasting glucose and HbA1c test with your GP is recommended.', Medium: 'Moderate diabetes risk. Reducing processed food and increasing activity can significantly lower this.' },
   heart_disease_risk_level: { High: 'High cardiovascular risk. A medical review of BP, cholesterol and ECG is recommended.', Medium: 'Moderate CVD risk. Focus on stress reduction, quitting smoking if applicable, and a heart-healthy diet.' },
@@ -409,7 +409,7 @@ var CONCERN_MSGS = {
   respiratory_risk_level:   { High: 'High respiratory risk. Smoking cessation is the single most impactful intervention available.', Medium: 'Moderate respiratory risk. Avoiding smoke and allergens and staying active helps lung capacity.' },
 };
 
-// Main Dashboard component
+// main dashboard component
 export default function Dashboard({ predictions, featureImportances, existingConditions, onReset, onGeneratePlan }) {
   var [activeTileKey, setActiveTileKey] = useState(null);
 
@@ -497,7 +497,7 @@ export default function Dashboard({ predictions, featureImportances, existingCon
         <div style={{ flex: 1, minWidth: '220px' }}>
           <p style={{ fontSize: '18px', fontWeight: 800, color: '#0f172a', margin: '0 0 8px' }}>Ready to take action on your results?</p>
           <p style={{ fontSize: '14px', color: '#475569', margin: 0, lineHeight: 1.6 }}>
-            Get clear, personalised guidance on what to eat, which workouts to do, and the lifestyle changes most likely to bring your risks down — based on your results.
+            Get clear, personalised guidance on what to eat, which workouts to do, and the lifestyle changes most likely to bring your risks down - based on your results.
           </p>
         </div>
         <button onClick={onGeneratePlan} style={{ flexShrink: 0, padding: '16px 26px', background: 'linear-gradient(135deg, #059669, #10b981)', color: 'white', border: 'none', borderRadius: '12px', fontSize: '15px', fontWeight: 700, cursor: 'pointer', boxShadow: '0 4px 14px rgba(16,185,129,0.35)', whiteSpace: 'nowrap' }}>

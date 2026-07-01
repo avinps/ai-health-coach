@@ -4,28 +4,28 @@ import Dashboard            from './components/Dashboard';
 import RecommendationsView  from './components/RecommendationsView';
 import { healthAPI, wakeServer } from './api';
 
-// ── Demo profile — pre-fills all 44 form fields with a realistic sample ────
-// 38-year-old male desk worker. Mixed risk: overweight, sedentary, moderate stress,
-// family history of diabetes & hypertension, former smoker. Shows meaningful xAI.
+// demo profile, fills all 44 form fields with a sample person.
+// 38 year old male desk worker. mixed risk: overweight, sedentary, some stress,
+// family history of diabetes and hypertension, former smoker. gives nice xai.
 const DEMO_PROFILE = {
-  // Step 1 — Demographics
+  // step 1 demographics
   age: '38', gender: 'Male', height_cm: '175', weight_kg: '84',
-  // Step 2 — Lifestyle
+  // step 2 lifestyle
   exercise_level: 'Sedentary', avg_sleep_hours: '6', stress_level: '7',
   diet_type: 'Non Vegetarian', eat_fruits_daily: 'No', eat_veggies_daily: 'Yes',
   eat_processed_food: 'Moderate', water_intake_liters: '1.5',
   meal_frequency: '3', metabolism_type: 'Normal',
-  // Step 3 — Work & Habits
+  // step 3 work and habits
   employment_status: 'Employed', work_type: 'Desk/Office', work_stress: '7',
   alcohol_consumption: 'Rarely', smoking_status: 'Former',
   screen_time_hours: '9', sun_exposure: 'Low',
-  // Step 4 — Medical & Family History
+  // step 4 medical and family history
   family_history_diabetes: 'Yes', family_history_heart_disease: 'No',
   family_history_hypertension: 'Yes', family_history_obesity: 'No',
   family_history_pcos: 'N/A',
   has_asthma: 'No', has_thyroid: 'No', has_allergies: 'Yes',
   has_diabetes: 'No', has_heart_disease: 'No', has_hypertension: 'No',
-  // Step 5 — Symptoms & Mental Health
+  // step 5 symptoms and mental health
   fatigue_level: '6', anxiety_level: '6',
   social_interaction_level: 'Moderate', shortness_of_breath: 'Rarely',
   frequent_headaches: 'Sometimes', digestive_issues: 'Rarely',
@@ -34,65 +34,64 @@ const DEMO_PROFILE = {
   menstrual_regularity: 'N/A',
 };
 
-// Views: 'form' | 'dashboard' | 'recommendations'
+// views: 'form' | 'dashboard' | 'recommendations'
 export default function App() {
   const [view,        setView]        = useState('form');
   const [isLoading,   setIsLoading]   = useState(false);
   const [error,       setError]       = useState(null);
 
-  // Phase 1 results
+  // phase 1 results
   const [predictions, setPredictions] = useState(null);
   const [explanation, setExplanation] = useState(null);
 
-  // Per-model feature importances returned by the API
+  // feature importances per model from the api
   const [featureImportances, setFeatureImportances] = useState({});
 
-  // Existing conditions declared in the form (display-only, not sent to API)
+  // existing conditions from the form, just for display, not sent to the api
   const [existingConditions, setExistingConditions] = useState({});
 
-  // Raw form payload — passed to Dashboard for per-condition xAI impact computation
+  // raw form data, passed to dashboard for the per condition xai impact
   const [formData, setFormData] = useState(null);
 
-  // Anthropometric data from the health form — passed to the questionnaire
-  // so it can enforce goal-weight constraints and compute ideal weight
+  // height and weight from the form, passed on so we can work out ideal weight
   const [userProfile, setUserProfile] = useState({ weight_kg: null, height_cm: null });
 
-  // Cold-start detection — true when we're waiting for Render to wake up
+  // cold start detection, true while we wait for render to wake up
   const [isWaking,      setIsWaking]      = useState(false);
   const [wakeProgress,  setWakeProgress]  = useState(0);
 
-  // Recommendations result (from /generate/recommendations)
+  // recommendations result from /generate/recommendations
   const [recommendations, setRecommendations] = useState(null);
   const [recsLoading,      setRecsLoading]     = useState(false);
 
-  // Assessment id from /predict/risks — links the recommendations to the stored row
+  // assessment id from /predict/risks, links the recommendations to the stored row
   const [assessmentId, setAssessmentId] = useState(null);
 
-  // Wake the (free-tier) backend as soon as the app loads, so it's ready by the
-  // time the user finishes the form and clicks Analyse. Fire-and-forget.
+  // wake the free tier backend as soon as the app loads so its ready by the
+  // time the user finishes the form and clicks analyse. fire and forget.
   useEffect(() => {
     wakeServer();
   }, []);
 
-  // Phase 1: Analyse 
+  // phase 1: analyse
   const handleAnalyse = useCallback(async (formPayload, incomingExistingConditions = {}, isDemo = false) => {
     setIsLoading(true);
     setError(null);
-    // Store display-only data immediately
+    // store display only data right away
     setExistingConditions(incomingExistingConditions);
-    // Store full form payload for per-condition xAI impact computation in Dashboard
+    // store the full form payload for the per condition xai impact in dashboard
     setFormData(formPayload);
-    // Capture anthropometrics before the async call so questionnaire can use them
+    // grab height and weight before the async call so the questionnaire can use them
     setUserProfile({
       weight_kg: formPayload.weight_kg ?? null,
       height_cm: formPayload.height_cm ?? null,
     });
-    // Called by api.js when the 4s ping times out (server is cold-starting)
+    // called by api.js when the ping times out (server is cold starting)
     const onWaking = () => {
       setIsLoading(false);   // hide the normal spinner
-      setIsWaking(true);     // show the wake-up overlay
+      setIsWaking(true);     // show the wake up overlay
       setWakeProgress(0);
-      // Animate a progress bar over ~82s (typical Render cold start)
+      // animate a progress bar over about 82s (typical render cold start)
       const start = Date.now();
       const DURATION = 82000;
       const tick = () => {
@@ -120,8 +119,8 @@ export default function App() {
     }
   }, []);
 
-  // Generate recommendations from the existing prediction result.
-  // Reuses predictions + feature importances already in state — no new data collected.
+  // make recommendations from the prediction we already have.
+  // reuses predictions and feature importances in state, no new data collected.
   const handleGetRecommendations = useCallback(async () => {
     setRecsLoading(true);
     setError(null);
@@ -137,7 +136,7 @@ export default function App() {
     }
   }, [predictions, featureImportances, assessmentId]);
 
-  // Full reset 
+  // full reset
   const handleReset = () => {
     setView('form');
     setPredictions(null);
@@ -153,7 +152,7 @@ export default function App() {
     setWakeProgress(0);
   };
 
-  // Step indicator config per view 
+  // step indicator setup per view
   const STEPS = ['Risk Assessment', 'Your Dashboard', 'Recommendations'];
   const stepIndex = { form: 0, dashboard: 1, recommendations: 2 };
   const currentStep = stepIndex[view] ?? 0;
@@ -161,7 +160,7 @@ export default function App() {
   return (
     <div style={s.root}>
 
-      {/* Header */}
+      {/* header */}
       <header style={s.header}>
         <div style={s.headerInner}>
           <span style={s.logo}>🧬</span>
@@ -174,7 +173,7 @@ export default function App() {
           )}
         </div>
 
-        {/* 3-step indicator */}
+        {/* 3 step indicator */}
         <div style={s.stepRow}>
           {STEPS.map((label, i) => {
             const active = i === currentStep;
@@ -189,7 +188,7 @@ export default function App() {
         </div>
       </header>
 
-      {/* Error banner */}
+      {/* error banner */}
       {error && (
         <div style={s.errBanner}>
           ⚠️ {error}
@@ -197,54 +196,54 @@ export default function App() {
         </div>
       )}
 
-      {/* Normal loading overlay */}
+      {/* normal loading overlay */}
       {isLoading && !isWaking && (
         <div style={s.overlay}>
           <div style={s.overlayCard}>
             <div style={s.spinner} />
-            <p style={s.spinnerText}>Running 7-model health risk analysis…</p>
+            <p style={s.spinnerText}>Running 7-model health risk analysis...</p>
             <p style={s.spinnerSub}>Please wait a few seconds.</p>
           </div>
         </div>
       )}
 
-      {/* Recommendations generation overlay */}
+      {/* recommendations loading overlay */}
       {recsLoading && (
         <div style={s.overlay}>
           <div style={s.overlayCard}>
             <div style={s.spinner} />
-            <p style={s.spinnerText}>Building your risk-reduction recommendations…</p>
+            <p style={s.spinnerText}>Building your risk-reduction recommendations...</p>
             <p style={s.spinnerSub}>Tailoring guidance to your results.</p>
           </div>
         </div>
       )}
 
-      {/* Cold-start / waking overlay — shown when Render free tier is sleeping */}
+      {/* cold start / waking overlay, shown when render free tier is asleep */}
       {isWaking && (
         <div style={s.overlay}>
           <div style={{ ...s.overlayCard, maxWidth: '440px', width: '90%' }}>
-            {/* Moon + zZZ animation */}
+            {/* moon animation */}
             <div style={{ fontSize: '52px', marginBottom: '16px', lineHeight: 1 }}>🌙</div>
-            <p style={{ ...s.spinnerText, marginBottom: '6px' }}>Waking up the server…</p>
+            <p style={{ ...s.spinnerText, marginBottom: '6px' }}>Waking up the server...</p>
             <p style={{ ...s.spinnerSub, marginBottom: '24px', lineHeight: 1.6 }}>
               The server went to sleep after a period of inactivity (free tier hosting).
-              <br />This usually takes <strong> a minute</strong> — hang tight!
+              <br />This usually takes <strong> a minute</strong> - hang tight!
             </p>
-            {/* Progress bar */}
+            {/* progress bar */}
             <div style={s.wakeBarTrack}>
               <div style={{ ...s.wakeBarFill, width: `${wakeProgress}%` }} />
             </div>
             <p style={{ ...s.spinnerSub, marginTop: '10px' }}>
-              {wakeProgress < 30  ? 'Starting up…' :
-               wakeProgress < 60  ? 'Loading models…' :
-               wakeProgress < 90  ? 'Almost ready few more seconds…' :
-               'Running analysis…'}
+              {wakeProgress < 30  ? 'Starting up...' :
+               wakeProgress < 60  ? 'Loading models...' :
+               wakeProgress < 90  ? 'Almost ready few more seconds...' :
+               'Running analysis...'}
             </p>
           </div>
         </div>
       )}
 
-      {/* Content */}
+      {/* content */}
       <main style={s.main}>
 
         {view === 'form' && (
@@ -284,7 +283,7 @@ export default function App() {
   );
 }
 
-// Styles 
+// styles
 const s = {
   root:        { minHeight: '100vh', background: '#f0f4f8', fontFamily: "'Inter', system-ui, sans-serif" },
   header:      { background: 'linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%)', boxShadow: '0 4px 20px rgba(0,0,0,0.3)' },

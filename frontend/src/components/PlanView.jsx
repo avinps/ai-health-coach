@@ -27,7 +27,7 @@ const mb = {
   fill:   { height: '100%', borderRadius: '999px', transition: 'width 0.8s ease' },
 };
 
-// Category icon map 
+// category icon map
 const CAT_ICONS = {
   nutrition:   '🥗',
   exercise:    '🏃',
@@ -126,7 +126,7 @@ function BMIMeter({ bmi, category }) {
         <div style={{ position: 'absolute', left: `${pct}%`, transform: 'translateX(-50%)' }}>
           <div style={{ width: '3px', height: '12px', background: '#0f172a', margin: '0 auto' }} />
           <span style={{ fontSize: '11px', fontWeight: 700, color: '#0f172a', whiteSpace: 'nowrap' }}>
-            {bmi} — {category}
+            {bmi} - {category}
           </span>
         </div>
       </div>
@@ -134,7 +134,7 @@ function BMIMeter({ bmi, category }) {
   );
 }
 
-// Main PlanView 
+// main planview
 export default function PlanView({ plan, cluster, predictions, onReset }) {
   const [activeTab, setActiveTab] = useState('all');
 

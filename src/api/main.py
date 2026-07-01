@@ -10,14 +10,14 @@ from typing import Any, Dict, List, Literal, Optional
 import numpy as np
 import pandas as pd
 
-# Recommendation engine (curated substrate + Gemini synthesis + fallback).
-# try/except so this works whether run as `src.api.main:app` or directly.
+# recommendation engine (curated substrate + gemini + fallback).
+# try/except so it works whether run as `src.api.main:app` or directly.
 try:
     from . import recommendations as recs
 except ImportError:  # pragma: no cover
     import recommendations as recs
 
-# Analytics persistence (best-effort — no-op if DATABASE_URL is unset).
+# database for analytics. does nothing if DATABASE_URL is not set.
 try:
     from . import db as db
 except ImportError:  # pragma: no cover
@@ -33,7 +33,7 @@ from pydantic import BaseModel, Field, field_validator
 
 warnings.filterwarnings("ignore")
 
-# Project root detection (works from src/api/main.py AND api/main.py) 
+# find the project root (works from src/api/main.py and api/main.py)
 def _find_root() -> Path:
     here = Path(__file__).resolve()
     for candidate in [here.parent, here.parents[1], here.parents[2], here.parents[3]]:
@@ -42,13 +42,13 @@ def _find_root() -> Path:
     return here.parents[2]
 
 ROOT = _find_root()
-# Artifacts saved by the notebook as saved_models/
+# the notebook saves the models into saved_models/
 SAVED_DIR = ROOT / "saved_models"
 SAVED_DIR.mkdir(parents=True, exist_ok=True)
 
-# App 
-# Disable interactive API docs in production.
-# Set ENVIRONMENT=development in your .env to re-enable during local dev.
+# app setup.
+# turn off the interactive api docs in production.
+# set ENVIRONMENT=development in your .env to get them back during local dev.
 _env = os.getenv("ENVIRONMENT", "production")
 _docs_url    = "/docs"    if _env == "development" else None
 _redoc_url   = "/redoc"   if _env == "development" else None
@@ -62,13 +62,13 @@ app = FastAPI(
     redoc_url=_redoc_url,
     openapi_url=_openapi_url,
 )
-# Rate limiter — 30 requests per minute per IP on the predict endpoint
+# rate limiter, 30 requests per minute per ip on the predict endpoint
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# CORS — never use "*" in production.
-# Set ALLOWED_ORIGINS in your .env file, e.g.:
+# cors. don't use "*" in production.
+# set ALLOWED_ORIGINS in your .env, for example:
 #   ALLOWED_ORIGINS=https://your-frontend.vercel.app,http://localhost:5173
 _raw_origins = os.getenv(
     "ALLOWED_ORIGINS",
@@ -79,12 +79,12 @@ ALLOWED_ORIGINS = [o.strip() for o in _raw_origins.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=False,      # no cookies/auth in Phase 1 — keep False
+    allow_credentials=False,      # no cookies/auth in phase 1, keep this False
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type", "Accept"],
 )
 
-# Security headers middleware — adds hardening headers to every response
+# adds some security headers to every response
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
     response = await call_next(request)
@@ -92,12 +92,12 @@ async def add_security_headers(request: Request, call_next):
     response.headers["X-Frame-Options"]        = "DENY"
     response.headers["Referrer-Policy"]        = "strict-origin-when-cross-origin"
     response.headers["X-XSS-Protection"]       = "1; mode=block"
-    # Restrict what the API response can do in a browser context
+    # limit what the api response can do inside a browser
     response.headers["Content-Security-Policy"] = "default-src 'none'"
     return response
 
-# Request body size limit — reject payloads larger than 64 KB
-MAX_BODY_BYTES = 64 * 1024   # 64 KB — a valid health form JSON is ~2 KB
+# reject request bodies bigger than 64 kb
+MAX_BODY_BYTES = 64 * 1024   # a valid health form json is around 2 kb
 
 @app.middleware("http")
 async def limit_body_size(request: Request, call_next):
@@ -110,38 +110,38 @@ async def limit_body_size(request: Request, call_next):
             )
     return await call_next(request)
 
-# Artifact registry 
-A: Dict[str, Any] = {}   # loaded at startup
+# loaded artifacts live here
+A: Dict[str, Any] = {}   # filled at startup
 
 
 def _load_pkl(name: str) -> Any:
     p = SAVED_DIR / name
     if not p.exists():
-        print(f"  ⚠️  {p} not found")
+        print(f"  {p} not found")
         return None
     with open(p, "rb") as f:
         obj = pickle.load(f)
-    print(f"  ✅ {name}")
+    print(f"  loaded {name}")
     return obj
 
 
 @app.on_event("startup")
 async def startup():
-    print("\n🚀 AI Health Coach API v3.0 — starting up")
-    # Filesystem paths are intentionally not logged to avoid exposing
-    # internal directory structure in cloud log aggregators.
+    print("\nAI Health Coach API v3.0 starting up")
+    # not logging file paths on purpose, so the internal folder layout doesn't
+    # end up in cloud logs.
     A["models"]   = _load_pkl("all_models.pkl")
     A["pipeline"] = _load_pkl("preprocessing_pipeline.pkl")
 
     if A["pipeline"]:
         pp = A["pipeline"]
-        print(f"   Features loaded: {len(pp['feature_columns'])}")
-        print(f"   Target models:   {len(pp['target_configs'])}")
+        print(f"   features loaded: {len(pp['feature_columns'])}")
+        print(f"   target models:   {len(pp['target_configs'])}")
 
-    # ── Gemini client for the recommendations endpoint ────────────────────────
-    # Optional: if no API key (or the package isn't installed), recommendations
-    # silently fall back to the deterministic substrate assembly. The app still
-    # boots and /predict/risks is unaffected.
+    # gemini client for the recommendations endpoint.
+    # optional: if there's no api key (or the package isn't installed) the
+    # recommendations just fall back to the deterministic substrate. the app still
+    # boots and /predict/risks is not affected.
     A["genai_client"] = None
     A["gemini_model"] = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
     _gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
@@ -149,28 +149,28 @@ async def startup():
         try:
             from google import genai
             A["genai_client"] = genai.Client(api_key=_gemini_key)
-            print(f"   Gemini client ready (model: {A['gemini_model']})")
+            print(f"   gemini client ready (model: {A['gemini_model']})")
         except Exception:
-            print("   Gemini unavailable — recommendations will use deterministic fallback")
+            print("   gemini not available, recommendations will use the fallback")
     else:
-        print("   No GEMINI_API_KEY set — recommendations will use deterministic fallback")
+        print("   no GEMINI_API_KEY set, recommendations will use the fallback")
 
-    # ── Database for analytics (optional) ─────────────────────────────────────
+    # optional database for analytics
     db.init_db()
 
-    print("✅ Startup complete.\n")
+    print("startup complete\n")
 
 
 def _gemini_call(system_instruction: str, prompt: str) -> str:
-    """Blocking Gemini call. Run via asyncio.to_thread from the async endpoint.
+    """blocking gemini call. run it with asyncio.to_thread from the async endpoint.
 
-    Uses the SDK's native JSON output mode (response_mime_type), which is far more
-    reliable than asking the model to 'return JSON' in the prompt alone.
+    uses the sdk's native json output mode (response_mime_type), which is a lot
+    more reliable than just asking the model to "return json" in the prompt.
 
-    thinking_budget=0 disables the model's internal 'thinking' step. gemini-2.5-flash
-    is a thinking model by default, and that reasoning consumes output tokens — which
-    can starve (and truncate) the actual JSON. This task is selection + phrasing, not
-    reasoning, so we turn thinking off: it makes the JSON reliable AND the call faster.
+    thinking_budget=0 turns off the model's internal thinking step. gemini-2.5-flash
+    is a thinking model by default, and that reasoning uses up output tokens, which
+    can starve and cut off the actual json. this task is selection + phrasing, not
+    reasoning, so turning thinking off makes the json reliable and the call faster.
     """
     from google.genai import types
     client = A["genai_client"]
@@ -188,9 +188,9 @@ def _gemini_call(system_instruction: str, prompt: str) -> str:
     return resp.text
 
 
-# Feature importance helpers 
+# helpers for feature importance
 
-# Features the user CANNOT change. Used to colour code the xAI bars
+# features the user can't change. used to colour the xai bars
 NON_MODIFIABLE_FEATURES = {
     'age', 'age_decade', 'bmi_age_interaction', 'is_female_reproductive',
     'family_history_diabetes', 'family_history_heart_disease',
@@ -198,8 +198,8 @@ NON_MODIFIABLE_FEATURES = {
     'family_history_load',
     'has_asthma', 'has_thyroid', 'has_allergies',
     'gender_Male', 'gender_Other',
-    # height_cm and weight_kg are always hidden. BMI already represents them.
-    # Showing raw height/weight alongside BMI is redundant and confusing.
+    # height_cm and weight_kg are always hidden. bmi already covers them.
+    # showing raw height/weight next to bmi is redundant and confusing.
     'height_cm', 'weight_kg',
 }
 
@@ -209,52 +209,49 @@ def _is_non_modifiable(feature: str) -> bool:
 
 
 def _build_suppressed_features(raw_input: dict) -> set:
-    """
-    To Build the set of feature names to suppress from the xAI chart based on
-    the user's actual raw input values.
+    """build the set of feature names to hide from the xai chart, based on the
+    user's actual raw answers.
 
-    Philosophy: only show a feature if the user's value for it is
-    SCIENTIFICALLY contributing to the risk — not just because the model
-    considers it globally important.
+    idea: only show a feature if the user's value for it is actually adding to the
+    risk, not just because the model thinks it's globally important.
 
-    Rules applied:
-      - Smoking        - suppress if Never
-      - Alcohol        - suppress if Never
-      - Processed food - suppress if Never or Rarely
-      - Family history (any) - suppress each one individually if answered No
-      - family_history_load (engineered) - suppress if ALL family histories are No
-      - has_asthma / has_thyroid / has_allergies - suppress if No
-      - Diabetes symptom cluster (frequent_urination, slow_wound_healing,
-        numbness_tingling, diabetes_symptom_count) - suppress all if every
-        individual symptom is No
-      - BMI / bmi_risk_cat / bmi_age_interaction - suppress if BMI is in the
-        healthy range (18.5–22.9, user-specified). Show for underweight and
-        overweight/obese because both genuinely affect health risk.
-      - height_cm / weight_kg - ALWAYS suppressed (BMI represents them).
-      - exercise_level / sedentary_screen_index - suppress only when Moderate
-        or Active. Always show when Sedentary or Light.
-      - eat_veggies_daily / eat_fruits_daily - suppress if value is Yes
-        (eating them is PROTECTIVE; showing them as a risk bar is misleading)
-      - healthy_diet_score - suppress if score >= 2 (reasonably healthy diet)
-      - sleep_deviation - suppress if deviation from 7.5h is <= 1.5h (acceptable range)
+    the rules:
+      - smoking        - hide if Never
+      - alcohol        - hide if Never
+      - processed food - hide if Never or Rarely
+      - family history (each one) - hide if answered No
+      - family_history_load (engineered) - hide if all family histories are No
+      - has_asthma / has_thyroid / has_allergies - hide if No
+      - diabetes symptoms (frequent_urination, slow_wound_healing,
+        numbness_tingling, diabetes_symptom_count) - hide all if every symptom is No
+      - bmi / bmi_risk_cat / bmi_age_interaction - hide if bmi is in the healthy
+        range (18.5-22.9). show for underweight and overweight/obese because both
+        actually affect risk.
+      - height_cm / weight_kg - always hidden (bmi covers them).
+      - exercise_level / sedentary_screen_index - hide only when Moderate or
+        Active. always show when Sedentary or Light.
+      - eat_veggies_daily / eat_fruits_daily - hide if Yes (eating them is
+        protective, showing them as a risk bar is misleading)
+      - healthy_diet_score - hide if score >= 2 (reasonably healthy diet)
+      - sleep_deviation - hide if it's within 1.5h of 7.5h (fine range)
     """
     suppressed = set()
     r = raw_input  # shorthand
 
-    # 1. Smoking 
+    # smoking
     if r.get('smoking_status') == 'Never':
         suppressed.add('smoking_status')
 
-    # 2. Alcohol 
+    # alcohol
     if r.get('alcohol_consumption') == 'Never':
         suppressed.add('alcohol_consumption')
 
-    # 3. Processed food 
-    # Never=0, Rarely=1 are acceptable; only Moderate=2 / Heavy=3 are risk-adding
+    # processed food
+    # Never=0, Rarely=1 are fine, only Moderate=2 / Heavy=3 add risk
     if r.get('eat_processed_food') in ('Never', 'Rarely'):
         suppressed.add('eat_processed_food')
 
-    # 4. Family history — each field individually 
+    # family history, each field on its own
     fh_fields = [
         'family_history_diabetes', 'family_history_heart_disease',
         'family_history_hypertension', 'family_history_obesity',
@@ -269,18 +266,18 @@ def _build_suppressed_features(raw_input: dict) -> set:
             fh_yes_count += 1
 
     # family_history_load is the engineered sum of all family histories.
-    # Suppress it unless at least one family history is Yes.
+    # hide it unless at least one family history is Yes.
     if fh_yes_count == 0:
         suppressed.add('family_history_load')
 
-    # 5. Diagnosed conditions 
+    # diagnosed conditions
     for cond in ('has_asthma', 'has_thyroid', 'has_allergies'):
         if r.get(cond) != 'Yes':
             suppressed.add(cond)
 
-    # 6. Diabetes symptom cluster 
-    # Only show these if the user actually reported the symptom.
-    # diabetes_symptom_count is an engineered sum. suppress it if all are No.
+    # diabetes symptoms
+    # only show these if the user actually reported the symptom.
+    # diabetes_symptom_count is the engineered sum, hide it if all are No.
     symptom_fields = ('frequent_urination', 'slow_wound_healing', 'numbness_tingling')
     any_symptom = any(r.get(f) == 'Yes' for f in symptom_fields)
     for f in symptom_fields:
@@ -289,12 +286,12 @@ def _build_suppressed_features(raw_input: dict) -> set:
     if not any_symptom:
         suppressed.add('diabetes_symptom_count')
 
-    # 7. BMI and BMI-derived features 
-    # Healthy range: 18.5–22.9 (user-specified).
-    # Suppress bmi/bmi_risk_cat/bmi_age_interaction only inside this range.
-    # Show for underweight (< 18.5) AND overweight/obese (>= 23) because
-    # both directions are genuine risk contributors.
-    # height_cm and weight_kg are ALWAYS suppressed (BMI already represents them).
+    # bmi and the bmi-derived features
+    # healthy range: 18.5-22.9.
+    # hide bmi/bmi_risk_cat/bmi_age_interaction only inside this range.
+    # show for underweight (< 18.5) and overweight/obese (>= 23) because both
+    # directions really do add risk.
+    # height_cm and weight_kg are always hidden (bmi already covers them).
     suppressed.update({'height_cm', 'weight_kg'})
     bmi_val = r.get('bmi')
     try:
@@ -304,16 +301,16 @@ def _build_suppressed_features(raw_input: dict) -> set:
     except (TypeError, ValueError):
         pass
 
-    # 8. Fruit and vegetable intake 
-    # Eating fruits/veggies daily is PROTECTIVE — suppress from risk chart.
+    # fruit and vegetable intake
+    # eating fruits/veggies daily is protective, so hide it from the risk chart
     if r.get('eat_fruits_daily') == 'Yes':
         suppressed.add('eat_fruits_daily')
     if r.get('eat_veggies_daily') == 'Yes':
         suppressed.add('eat_veggies_daily')
 
-    # 9. Healthy diet score (engineered) 
-    # Compute the same way as the notebook to know if diet is genuinely poor.
-    # Score range: 0–4. Score >= 2 = reasonably healthy → suppress.
+    # healthy diet score (engineered)
+    # compute it the same way the notebook does to know if the diet is actually poor.
+    # score is 0-4. score >= 2 = reasonably healthy, so hide it.
     try:
         diet = r.get('diet_type', '')
         score = (
@@ -327,8 +324,8 @@ def _build_suppressed_features(raw_input: dict) -> set:
     except Exception:
         pass
 
-    # 10. Sleep deviation 
-    # Sleep between 6–9h (deviation from 7.5h <= 1.5h) is acceptable.
+    # sleep deviation
+    # sleep between 6-9h (within 1.5h of 7.5h) is fine
     try:
         sleep = float(r.get('avg_sleep_hours', 7.5))
         if abs(sleep - 7.5) <= 1.5:
@@ -336,44 +333,44 @@ def _build_suppressed_features(raw_input: dict) -> set:
     except (TypeError, ValueError):
         pass
 
-    # 11. Exercise level 
-    # Suppress exercise_level and sedentary_screen_index only when exercise is
-    # genuinely good (Moderate or Active). Sedentary and Light are real risk
-    # contributors and must always be shown when selected.
+    # exercise level
+    # hide exercise_level and sedentary_screen_index only when exercise is actually
+    # good (Moderate or Active). Sedentary and Light are real risk contributors and
+    # should always be shown when selected.
     exercise = r.get('exercise_level', '')
     if exercise in ('Moderate', 'Active'):
         suppressed.add('exercise_level')
         suppressed.add('sedentary_screen_index')
-    # Note: 'Sedentary' and 'Light' are deliberately NOT suppressed here.
+    # note: 'Sedentary' and 'Light' are on purpose NOT hidden here.
 
     return suppressed
 
 
 def _extract_shap_row(sv, row_idx: int = 0) -> np.ndarray:
-    """
-    Extract a 1-D SHAP array for a single prediction row from any SHAP output format.
+    """pull a 1-d shap array for a single prediction row out of whatever shape
+    shap gives back.
 
     GradientBoostingClassifier can return:
-      - list of arrays: one per class  → take class-1 (risk class)
-      - 3-D array (n_samples, n_features, n_classes) → slice [:, :, 1]
-      - 2-D array (n_samples, n_features)            → take row
+      - a list of arrays, one per class  -> take class 1 (the risk class)
+      - a 3-d array (n_samples, n_features, n_classes) -> slice [:, :, 1]
+      - a 2-d array (n_samples, n_features)            -> take the row
     """
     if isinstance(sv, list):
-        # list of (n_samples, n_features) arrays — index 1 = positive/risk class
+        # list of (n_samples, n_features) arrays, index 1 = positive/risk class
         arr = np.array(sv[1] if len(sv) > 1 else sv[0])
     else:
         arr = np.array(sv)
 
     if arr.ndim == 3:
-        arr = arr[:, :, 1]   # (n, f, c) → (n, f) for risk class
+        arr = arr[:, :, 1]   # (n, f, c) -> (n, f) for the risk class
 
     return arr[row_idx] if arr.ndim == 2 else arr
 
 
-# Features guaranteed to appear when user's value is risky.
-# Rule keys: raw_field, risky_values, features, targets (None=all), min_pts
-# Exercise Level: Risk Matrix Y for all 7 targets, weight 5-12 each.
-# sedentary_screen_index = (3-exercise_ordinal)*screen_time/3 — composite signal.
+# features that always show up when the user's value is risky.
+# rule keys: raw_field, risky_values, features, targets (None=all), min_pts
+# exercise level matters for all 7 targets.
+# sedentary_screen_index = (3-exercise_ordinal)*screen_time/3, a combined signal.
 GUARANTEED_SHOW: list = [
     {
         'raw_field':    'exercise_level',
@@ -392,30 +389,28 @@ def _get_per_model_shap(
     raw_input: dict,
     n: int = 8,
 ) -> dict:
-    """
-    To Compute true per sample, per feature SHAP contributions for all 7 models.
+    """compute the real per-sample, per-feature shap contributions for all 7 models.
 
-    Uses TreeExplainer → shap_values() on the actual preprocessed input row.
+    uses TreeExplainer -> shap_values() on the actual preprocessed input row.
 
-    Three-layer filtering + guarantee:
-      1. Threshold of 0.35 pts — captures real contributions at low risk
-         scores (e.g. Sedentary exercise when heart score is 15) while
-         filtering true noise. Guaranteed features bypass this.
-      2. Safe-value suppression: if the user's raw input for a feature matches
-         a scientifically safe/protective value (e.g. smoking=Never, family
-         history=No, BMI in healthy range), that feature is always suppressed
-         even if SHAP leaks a small positive value due to tree interactions.
-      3. Guaranteed-show injection: certain lifestyle features are ALWAYS shown
-         when the user's value is in a known risky range (e.g. exercise=Sedentary),
-         with a minimum impact of 1.0 pt. This prevents genuinely bad habits from
-         being silently dropped by a low SHAP threshold.
+    three filters + a guarantee:
+      1. threshold of 0.35 pts, catches real contributions at low risk scores
+         (like Sedentary exercise when the heart score is 15) while filtering out
+         noise. guaranteed features skip this.
+      2. safe-value suppression: if the user's raw answer for a feature is a
+         safe/protective value (smoking=Never, family history=No, bmi in healthy
+         range), that feature is always hidden even if shap leaks a small value.
+      3. guaranteed-show: some lifestyle features are always shown when the user's
+         value is in a known risky range (like exercise=Sedentary), with a minimum
+         impact of 1.0 pt. keeps genuinely bad habits from being dropped by a low
+         shap threshold.
     """
     import shap as shap_lib
 
     feature_cols = pipeline["feature_columns"]
     suppressed   = _build_suppressed_features(raw_input)
 
-    # Build guaranteed sets — all model and per model
+    # build the guaranteed sets, both all-model and per-model
     guaranteed_all: set = set()
     guaranteed_per: dict = {}
     for rule in GUARANTEED_SHOW:
@@ -437,12 +432,11 @@ def _get_per_model_shap(
         if model is None:
             continue
 
-        # Threshold 0.35 pts: loose enough to capture real contributions
-        # at low risk scores while filtering true noise.
-        # Guaranteed features bypass this via the 1.0 pt floor.
+        # threshold 0.35 pts: loose enough to catch real contributions at low risk
+        # scores while filtering noise. guaranteed features skip this via the 1.0 pt floor.
         threshold   = 0.35
 
-        # Merge global + per-model guaranteed sets
+        # merge the global + per-model guaranteed sets
         guaranteed = guaranteed_all | guaranteed_per.get(target_col, set())
 
         def _min_pts(feat: str) -> float:
@@ -476,7 +470,7 @@ def _get_per_model_shap(
                     'is_modifiable': not _is_non_modifiable(feat),
                 })
 
-            # Inject guaranteed features that SHAP didn't cover at all
+            # add guaranteed features that shap didn't cover at all
             for feat in guaranteed:
                 if feat in suppressed:
                     continue
@@ -490,7 +484,7 @@ def _get_per_model_shap(
                     })
 
         except Exception:
-            # Fallback: feature_importances_ × risk class probability
+            # fallback: feature_importances_ x risk class probability
             try:
                 imps   = model.feature_importances_
                 y_prob = model.predict_proba(X_scaled)[0]
@@ -513,7 +507,7 @@ def _get_per_model_shap(
                         'impact_points': pts,
                         'is_modifiable': not _is_non_modifiable(feat),
                     })
-                # Inject guaranteed features missing from fallback
+                # add guaranteed features missing from the fallback
                 for feat in guaranteed:
                     if feat in suppressed:
                         continue
@@ -534,14 +528,12 @@ def _get_per_model_shap(
     return result
 
 
-# Input schema 
+# input schema
 
 class HealthInput(BaseModel):
-    """
-    All 42 raw features collected by the frontend wizard.
-    Categorical fields are sent as their string labels; encoding happens in the API.
-    """
-    # Numerical 
+    """all 42 raw features the frontend wizard collects.
+    categorical fields come in as their string labels, encoding happens in the api."""
+    # numbers
     age:                  float = Field(..., ge=18,  le=80)
     height_cm:            float = Field(..., ge=140, le=200)
     weight_kg:            float = Field(..., ge=35,  le=180)
@@ -555,9 +547,9 @@ class HealthInput(BaseModel):
     anxiety_level:        int   = Field(..., ge=1,   le=10)
     fatigue_level:        int   = Field(..., ge=1,   le=10)
 
-    # Categorical — each field is restricted to its exact allowed values.
-    # Any value outside these sets is rejected with a 422 before it reaches
-    # the preprocessing pipeline, preventing silent garbage-in outputs.
+    # categorical, each field is locked to its exact allowed values.
+    # anything outside these sets gets rejected with a 422 before it reaches the
+    # preprocessing, which stops silent garbage-in outputs.
     gender:                       Literal["Male", "Female", "Other"]
     exercise_level:               Literal["Sedentary", "Light", "Moderate", "Active"]
     diet_type:                    Literal["Omnivore", "Non Vegetarian", "Vegetarian", "Vegan",
@@ -596,9 +588,9 @@ class HealthInput(BaseModel):
     menstrual_regularity:         Literal["Regular", "Irregular", "Very Irregular", "N/A"]
 
 
-# Preprocessing: exact mirror of the notebook 
+# preprocessing, has to match the notebook exactly
 
-# These mappings are identical to Cell 11 in preprocessing_ml_pipeline.ipynb
+# same as cell 11 in the preprocessing notebook
 ORDINAL_MAPPINGS = {
     'exercise_level':           {'Sedentary': 0, 'Light': 1, 'Moderate': 2, 'Active': 3},
     'eat_processed_food':       {'Never': 0, 'Rarely': 1, 'Moderate': 2, 'Heavy': 3},
@@ -614,7 +606,7 @@ ORDINAL_MAPPINGS = {
     'menstrual_regularity':     {'N/A': -1, 'Regular': 0, 'Irregular': 1, 'Very Irregular': 2},
 }
 
-# These mappings are identical to Cell 12
+# same as cell 12
 BINARY_MAPPINGS = {
     'eat_fruits_daily':             {'Yes': 1, 'No': 0},
     'eat_veggies_daily':            {'Yes': 1, 'No': 0},
@@ -632,79 +624,76 @@ BINARY_MAPPINGS = {
     'smoking_status':               {'Never': 0, 'Former': 1, 'Current': 2},
 }
 
-# Nominal columns one-hot encoded with drop_first=True (Cell 13)
+# nominal columns, one-hot encoded with drop_first=True (cell 13)
 NOMINAL_COLS = ['gender', 'diet_type', 'employment_status', 'work_type']
 
-# Engineered features (Cell 9)
+# engineered features (cell 9)
 EXERCISE_MAP = {'Sedentary': 0, 'Light': 1, 'Moderate': 2, 'Active': 3}
 
 
 def preprocess(inp: HealthInput, pipeline: Dict) -> pd.DataFrame:
-    """
-    Convert a HealthInput object into the exact feature DataFrame that
-    the trained GradientBoosting models expect.
+    """turn a HealthInput into the exact feature dataframe the trained models want.
 
-    Steps mirror preprocessing_ml_pipeline.ipynb cells 5–14 exactly.
+    steps match preprocessing_ml_pipeline.ipynb cells 5-14 exactly.
     """
-    # 1. Build raw row dict 
+    # 1. build the raw row dict
     raw = inp.dict()
 
-    # Handle the 'Omnivore' -> 'Non Vegetarian' rename that was applied to training data
-    # The notebook's Cell 5 renamed 'Omnivore' to 'Non Vegetarian'
-    # The form sends 'Non Vegetarian' directly. so no rename needed here.
+    # the notebook's cell 5 renamed 'Omnivore' to 'Non Vegetarian' in the training data.
+    # the form already sends 'Non Vegetarian', so no rename is needed here.
 
     df = pd.DataFrame([raw])
 
-    # 2. Ordinal encoding 
+    # 2. ordinal encoding
     for col, mapping in ORDINAL_MAPPINGS.items():
         if col in df.columns:
             df[col] = df[col].map(mapping)
-            # If value not in mapping (unknown), use 0 as safe default
+            # if a value isn't in the mapping, use 0 as a safe default
             df[col] = df[col].fillna(0)
 
-    # 3. Binary encoding 
+    # 3. binary encoding
     for col, mapping in BINARY_MAPPINGS.items():
         if col in df.columns:
             df[col] = df[col].map(mapping)
             df[col] = df[col].fillna(0)
 
-    # 4. One-hot encoding (match training get_dummies with drop_first=True) 
+    # 4. one-hot encoding (matches training get_dummies with drop_first=True)
     df = pd.get_dummies(df, columns=NOMINAL_COLS, drop_first=True, dtype=int)
 
-    # 5. Engineered features (Cell 9) 
-    # 5a. BMI risk category
+    # 5. engineered features (cell 9)
+    # 5a. bmi risk category
     df['bmi_risk_cat'] = pd.cut(df['bmi'],
         bins=[0, 18.5, 25, 30, 35, 40, 100],
         labels=[0, 1, 2, 3, 4, 5]).astype(int)
 
-    # 5b. Sleep deviation from optimal 7.5h
+    # 5b. sleep deviation from the ideal 7.5h
     df['sleep_deviation'] = abs(df['avg_sleep_hours'] - 7.5)
 
-    # 5c. Diabetes symptom count (using already-encoded values)
+    # 5c. diabetes symptom count (using the already-encoded values)
     df['diabetes_symptom_count'] = (
         df.get('frequent_urination', pd.Series([0])).fillna(0).astype(int) +
         df.get('slow_wound_healing', pd.Series([0])).fillna(0).astype(int) +
         df.get('numbness_tingling',  pd.Series([0])).fillna(0).astype(int) +
-        # perceived_appetite was encoded: Excessive=2
+        # perceived_appetite was encoded, Excessive=2
         (df.get('perceived_appetite', pd.Series([0])).fillna(0) == 2).astype(int)
     )
 
-    # 5d. Family history load
+    # 5d. family history load
     fh_cols = ['family_history_diabetes', 'family_history_heart_disease',
                'family_history_hypertension', 'family_history_obesity']
     df['family_history_load'] = sum(
         df.get(c, pd.Series([0])).fillna(0).clip(lower=0) for c in fh_cols
     )
 
-    # 5e. Stress-anxiety composite
+    # 5e. stress-anxiety composite
     df['stress_anxiety_composite'] = (
         df['stress_level'] + df['anxiety_level'] + df['work_stress']
     ) / 3.0
 
-    # 5f. Healthy diet score (requires original string values — compute from numerics)
+    # 5f. healthy diet score (needs the original strings, compute from numerics)
     # eat_fruits_daily=1 (Yes), eat_veggies_daily=1 (Yes)
     # eat_processed_food Never=0, Rarely=1 -> <=1 counts as healthy
-    # diet_type: Mediterranean/Vegetarian/Vegan -> handled via one-hot cols
+    # diet_type: Mediterranean/Vegetarian/Vegan -> handled by the one-hot cols
     med_col  = df.get('diet_type_Mediterranean', pd.Series([0])).fillna(0)
     veg_col  = df.get('diet_type_Vegetarian',    pd.Series([0])).fillna(0)
     vegan_col= df.get('diet_type_Vegan',         pd.Series([0])).fillna(0)
@@ -715,53 +704,53 @@ def preprocess(inp: HealthInput, pipeline: Dict) -> pd.DataFrame:
         (med_col + veg_col + vegan_col).clip(upper=1).astype(int)
     )
 
-    # 5g. Age decade
+    # 5g. age decade
     df['age_decade'] = (df['age'] // 10) * 10
 
-    # 5h. BMI × age interaction
+    # 5h. bmi x age interaction
     df['bmi_age_interaction'] = df['bmi'] * np.log1p(df['age'])
 
-    # 5i. Sedentary screen index (exercise_level already encoded as 0-3)
+    # 5i. sedentary screen index (exercise_level already encoded as 0-3)
     ex_num = df.get('exercise_level', pd.Series([1])).fillna(1)
     df['sedentary_screen_index'] = (3 - ex_num) * df['screen_time_hours'] / 3
 
-    # 5j. Is female reproductive age
+    # 5j. is female of reproductive age
     # gender was one-hot: after drop_first on ['Male','Female','Other']
-    # The base (dropped) category depends on alphabetical order: Female, Male, Other
-    # drop_first=True drops 'Female' → columns are gender_Male, gender_Other
-    # So is_female_reproductive: NOT (gender_Male or gender_Other) AND age <= 50
+    # the dropped (base) category depends on alphabetical order: Female, Male, Other
+    # drop_first=True drops 'Female' -> columns are gender_Male, gender_Other
+    # so is_female_reproductive: NOT (gender_Male or gender_Other) AND age <= 50
     is_male  = df.get('gender_Male',  pd.Series([0])).fillna(0)
     is_other = df.get('gender_Other', pd.Series([0])).fillna(0)
     is_female = ((is_male == 0) & (is_other == 0)).astype(int)
     df['is_female_reproductive'] = (is_female & (df['age'] <= 50)).astype(int)
 
-    # 6. Align columns to training feature set 
+    # 6. line the columns up with the training feature set
     trained_cols = pipeline['feature_columns']
 
-    # Add any columns that appeared in training but aren't in this row
-    # (can happen for one-hot categories not present in single-row inference)
+    # add any columns that were in training but not in this row
+    # (can happen for one-hot categories not present in a single-row input)
     for col in trained_cols:
         if col not in df.columns:
             df[col] = 0
 
-    # Reorder to exact training column order, drop any extras
+    # reorder to the exact training column order, drop any extras
     df = df[trained_cols]
 
-    # 7. Scale 
+    # 7. scale
     scaler = pipeline['scaler']
     X_scaled = scaler.transform(df)
     return pd.DataFrame(X_scaled, columns=trained_cols)
 
 
-# SHAP helper 
+# shap helper
 
 def _extract_shap_class1(sv) -> np.ndarray:
-    """Handle both old (list) and new (3D ndarray) SHAP output formats."""
+    """handle both the old (list) and new (3d ndarray) shap output formats."""
     sv_arr = np.array(sv) if not isinstance(sv, np.ndarray) else sv
     if isinstance(sv, list):
         sv_arr = np.array(sv[1] if len(sv) > 1 else sv[0])
     elif sv_arr.ndim == 3:
-        sv_arr = sv_arr[:, :, 1]   # (n, f, c) → (n, f) class-1 slice
+        sv_arr = sv_arr[:, :, 1]   # (n, f, c) -> (n, f) class-1 slice
     return sv_arr
 
 
@@ -771,7 +760,7 @@ def get_shap_explanation(model, X_df: pd.DataFrame, feature_cols: List[str], n: 
         explainer   = shap.TreeExplainer(model)
         shap_values = explainer.shap_values(X_df)
         sv = _extract_shap_class1(shap_values)
-        # sv is (1, n_features) for a single sample — take row 0
+        # sv is (1, n_features) for a single sample, take row 0
         arr = sv[0] if sv.ndim == 2 else sv
         drivers = sorted(
             [{"feature": f, "impact": round(abs(float(v)), 5)} for f, v in zip(feature_cols, arr)],
@@ -782,7 +771,7 @@ def get_shap_explanation(model, X_df: pd.DataFrame, feature_cols: List[str], n: 
         pass
     except Exception as e:
         pass
-    # Fallback: GBM feature importances
+    # fallback: gbm feature importances
     try:
         imps = model.feature_importances_
         drivers = sorted(
@@ -794,13 +783,13 @@ def get_shap_explanation(model, X_df: pd.DataFrame, feature_cols: List[str], n: 
         return {"method": "unavailable", "error": str(e2), "top_risk_drivers": []}
 
 
-# Endpoints 
+# endpoints
 
 @app.get("/health")
 async def health():
     models_loaded   = A.get("models") is not None
     pipeline_loaded = A.get("pipeline") is not None
-    # Do NOT expose filesystem paths, directory structure, or internal layout.
+    # do not expose file paths, folder structure, or internal layout
     return {
         "status":  "healthy" if models_loaded and pipeline_loaded else "degraded",
         "version": "3.0.0",
@@ -815,13 +804,12 @@ async def predict_risks(
     background_tasks: BackgroundTasks,
     is_demo: bool = False,
 ):
-    """
-    Run all 7 GradientBoosting models and return level + score for each target.
-    Also returns SHAP explanation (or feature importances as fallback).
+    """run all 7 GradientBoosting models and return a level + score for each target.
+    also returns the shap explanation (or feature importances as a fallback).
 
-    Every real (non-demo) submission is stored for analytics — the form answers +
-    the predicted levels/scores. An `assessment_id` is returned so a later
-    "Get Recommendations" call can attach its output to this same row.
+    every real (non-demo) submission is stored for analytics: the form answers +
+    the predicted levels/scores. an assessment_id is returned so a later
+    "get recommendations" call can attach its output to this same row.
     """
     for key, name in [("models", "all_models.pkl"), ("pipeline", "preprocessing_pipeline.pkl")]:
         if A.get(key) is None:
@@ -834,13 +822,13 @@ async def predict_risks(
     pipeline = A["pipeline"]
     models   = A["models"]
 
-    # Preprocess 
+    # preprocess
     try:
         X_scaled = preprocess(inp, pipeline)
     except Exception as e:
         raise HTTPException(422, "Invalid input data. Please check all fields and try again.")
 
-    # Predict all 7 targets 
+    # predict all 7 targets
     predictions = {}
     target_configs = pipeline["target_configs"]
     target_encoders = pipeline["target_encoders"]
@@ -854,11 +842,11 @@ async def predict_risks(
         y_pred = model.predict(X_scaled)[0]           # integer class index
         y_prob = model.predict_proba(X_scaled)[0]     # probabilities per class
 
-        # Decode label
+        # decode the label
         level  = le.inverse_transform([y_pred])[0]
 
-        # Weighted risk score 0–100:
-        # For each class, multiply its probability by a severity weight.
+        # weighted risk score 0-100:
+        # for each class, multiply its probability by a severity weight.
         # Low/Poor=0.15, Medium/Fair=0.50, Good=0.75, High/Excellent=1.0
         level_weights = {}
         for cls in le.classes_:
@@ -883,7 +871,7 @@ async def predict_risks(
         predictions[target_col]  = level
         predictions[score_key]   = score
 
-    # SHAP on the primary model (diabetes) 
+    # shap on the primary model (diabetes)
     primary_model = models.get("diabetes_risk_level")
     explanation = {"method": "unavailable", "top_risk_drivers": []}
     if primary_model is not None:
@@ -893,8 +881,8 @@ async def predict_risks(
 
     feature_importances = _get_per_model_shap(models, pipeline, X_scaled, inp.dict())
 
-    # Persist this submission (form + predictions) unless it's a demo run.
-    # Best-effort, in the background — never delays or breaks the response.
+    # store this submission (form + predictions) unless it's a demo run.
+    # best effort, in the background, never delays or breaks the response.
     assessment_id = None
     if not is_demo:
         assessment_id = str(uuid.uuid4())
@@ -911,17 +899,17 @@ async def predict_risks(
     }
 
 
-# ── Recommendations ───────────────────────────────────────────────────────────
+# recommendations
 class RecommendationRequest(BaseModel):
-    """Echoes the relevant parts of the /predict/risks response back to us.
+    """echoes the relevant parts of the /predict/risks response back to us.
 
-    The frontend already holds both objects after prediction, so no new health
-    data is collected here — we only need the risk levels and the per-domain SHAP
-    drivers to build risk-reduction guidance.
+    the frontend already has both objects after prediction, so no new health data
+    is collected here, we just need the risk levels and the per-domain shap drivers
+    to build the risk-reduction guidance.
 
-    assessment_id (returned by /predict/risks) links this recommendation back to
-    the stored submission, so the full recommendations get saved onto that row.
-    It is null for demo submissions (which are never stored)."""
+    assessment_id (returned by /predict/risks) links this recommendation back to the
+    stored submission, so the full recommendations get saved onto that row. it is
+    null for demo submissions (which are never stored)."""
     predictions: Dict[str, Any] = Field(default_factory=dict)
     feature_importances: Dict[str, Any] = Field(default_factory=dict)
     assessment_id: Optional[str] = None
@@ -934,35 +922,33 @@ async def generate_recommendations(
     inp: RecommendationRequest,
     background_tasks: BackgroundTasks,
 ):
-    """
-    Turn risk predictions + their SHAP drivers into risk-reduction recommendations
-    (foods / exercise / lifestyle, each split into do-or-eat vs avoid).
+    """turn the risk predictions + their shap drivers into risk-reduction
+    recommendations (foods / exercise / lifestyle, each split into do-or-eat vs avoid).
 
-    Hybrid engine: a curated, vetted substrate supplies the actual health content;
-    Gemini selects, de-duplicates, prioritises by the user's own drivers, and
-    phrases it. If Gemini is unavailable or returns malformed output, we fall back
-    to a deterministic assembly from the same substrate — so this endpoint always
-    returns something useful.
+    hybrid engine: a curated, vetted substrate supplies the actual health content,
+    and gemini selects, de-duplicates, orders by the user's own drivers, and phrases
+    it. if gemini is missing or returns junk, we fall back to a deterministic build
+    from the same substrate, so this endpoint always returns something useful.
     """
     if not inp.predictions:
         raise HTTPException(422, "No predictions provided. Run a risk assessment first.")
 
     llm = _gemini_call if A.get("genai_client") is not None else None
     try:
-        # Run the whole thing (including the blocking Gemini call) off the event loop.
+        # run the whole thing (including the blocking gemini call) off the event loop
         result = await asyncio.to_thread(
             recs.generate, inp.predictions, inp.feature_importances or {}, llm
         )
     except Exception:
-        # recs.generate has its own internal fallback, so this should never fire —
-        # but never let an unexpected error leak to the client.
+        # recs.generate has its own fallback so this shouldn't fire, but never let an
+        # unexpected error leak to the client.
         raise HTTPException(
             503, "Could not generate recommendations right now. Please try again."
         )
 
-    # Best-effort analytics: attach the full recommendations to the stored
-    # submission (matched by assessment_id), AFTER the response is sent. Demo runs
-    # have no assessment_id, so nothing is stored for them.
+    # best-effort analytics: attach the full recommendations to the stored submission
+    # (matched by assessment_id), after the response is sent. demo runs have no
+    # assessment_id, so nothing is stored for them.
     if inp.assessment_id:
         background_tasks.add_task(
             db.update_recommendations,

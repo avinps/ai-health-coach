@@ -4,62 +4,50 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 const api = axios.create({
   baseURL: API_URL,
-  timeout: 120000,   // 120s — Render free tier cold start can take ~60s
+  timeout: 120000,   // 120s because render free tier cold start can take around 60s
   headers: {
     'Content-Type': 'application/json',
     'Accept': 'application/json',
   },
 });
 
-// Separate fast-timeout client just for the wake-up ping.
-// We use 5s — if /health doesn't respond in 5s the server is almost certainly
-// sleeping, and we should show the "Waking up..." UI before the real request.
+// separate client with a short timeout just for the wake up ping.
+// if /health doesnt answer quickly the server is probably asleep, so we
+// show the waking up screen before sending the real request.
 const pingApi = axios.create({
   baseURL: API_URL,
   timeout: 10000,
   headers: { 'Accept': 'application/json' },
 });
 
-/**
- * Check if the server is awake.
- * Returns: 'awake' | 'sleeping' | 'error'
- *   - 'awake'   : /health responded within 4s
- *   - 'sleeping': no response within 4s (server is cold-starting)
- *   - 'error'   : server responded with an error status (CORS, 500, etc.)
- */
+// check if the server is awake.
+// returns 'awake', 'sleeping' or 'error'
 export async function checkServerAwake() {
   try {
     await pingApi.get('/health');
     return 'awake';
   } catch (err) {
     if (err.code === 'ECONNABORTED' || err.message?.includes('timeout') || !err.response) {
-      // No response at all = server is sleeping or unreachable
+      // no response at all means the server is sleeping or unreachable
       return 'sleeping';
     }
-    // Got a response (even an error response) = server is up, something else is wrong
+    // we got some response so the server is up but something else is wrong
     return 'error';
   }
 }
 
-/**
- * Fire-and-forget wake-up ping. Call once when the app loads so Render's free-tier
- * instance starts spinning up in the background while the user is still filling in
- * the form. We deliberately do NOT await or surface the result — simply hitting the
- * endpoint is enough to trigger the cold start. By the time the user clicks
- * "Analyse", the instance is usually already awake, so the real request is fast.
- *
- * Uses the long-timeout client so the connection is held open through a full cold
- * start (~60s) rather than aborting early.
- */
+// fire and forget wake up ping. call it once when the app loads so render
+// starts spinning up in the background while the user fills the form.
+// we dont await it, just hitting the endpoint is enough to start the cold boot.
 export function wakeServer() {
-  api.get('/health').catch(() => { /* best-effort only — ignore all errors */ });
+  api.get('/health').catch(() => { /* best effort, ignore errors */ });
 }
 
-// Sanitise errors before they reach the UI.
-// Never show raw axios/network internals to the user.
+// clean up errors before they reach the ui.
+// never show raw axios or network stuff to the user.
 function sanitiseError(error) {
   if (error.response) {
-    // Server responded with a non-2xx status
+    // server answered with a non 2xx status
     const status = error.response.status;
     const detail = error.response.data?.detail;
 
@@ -67,12 +55,12 @@ function sanitiseError(error) {
       throw new Error('Too many requests. Please wait a moment before trying again.');
     }
     if (status === 422) {
-      // Validation error — detail may be an array of field errors from Pydantic
+      // validation error, detail might be an array of field errors from pydantic
       if (Array.isArray(detail)) {
         const msgs = detail
-          .map(d => `${d.loc?.slice(1).join(' → ')}: ${d.msg}`)
+          .map(d => `${d.loc?.slice(1).join(' > ')}: ${d.msg}`)
           .join(' | ');
-        throw new Error(`Validation error — ${msgs}`);
+        throw new Error(`Validation error: ${msgs}`);
       }
       throw new Error(detail || 'Some fields contain invalid values. Please review your answers.');
     }
@@ -82,47 +70,39 @@ function sanitiseError(error) {
     if (status === 503) {
       throw new Error('The analysis service is temporarily unavailable. Please try again in a moment.');
     }
-    // Generic server error — do NOT expose raw server error strings
+    // generic server error, dont expose raw server strings
     throw new Error('Something went wrong on our end. Please try again.');
   }
 
   if (error.request) {
-    // Request was made but no response received (network issue / CORS / timeout)
+    // request went out but no response came back (network / cors / timeout)
     throw new Error('Cannot reach the server. Please try again.');
   }
 
-  // Something else went wrong setting up the request
+  // something else broke while setting up the request
   throw new Error('An unexpected error occurred. Please try again.');
 }
 
 export const healthAPI = {
-  /**
-   * Submit health data for risk prediction.
-   *
-   * onWaking (optional callback) — called when we detect the server is sleeping,
-   * before the real request is sent. Use it to show a "Waking up..." UI.
-   * Called with no arguments. When the server responds, the UI should go back
-   * to normal loading state (handled by the caller resetting state on resolution).
-   */
+  // send health data and get the risk prediction back.
+  // onWaking is an optional callback, we call it when we notice the server is
+  // asleep so the caller can show a waking up screen.
   predictRisks: async (data, onWaking, isDemo = false) => {
-    // Quick ping first — if server doesn't respond in 4s it's cold-starting
+    // quick ping first, if the server doesnt answer its cold starting
     const serverState = await checkServerAwake();
     if (serverState === 'sleeping' && typeof onWaking === 'function') {
       onWaking();
     }
-    // Now send the actual prediction request (70s timeout handles cold start wait).
-    // is_demo tells the backend NOT to store demo submissions.
+    // now send the real prediction request.
+    // is_demo tells the backend not to store demo submissions.
     return api.post('/predict/risks', data, { params: { is_demo: !!isDemo } })
       .then(r => r.data)
       .catch(sanitiseError);
   },
 
-  /**
-   * Generate risk-reduction recommendations from the prediction result.
-   * Pass the `predictions` and `feature_importances` from predictRisks, plus the
-   * `assessmentId` it returned — the backend uses that id to attach the full
-   * recommendations to the stored submission. No new health data is collected.
-   */
+  // make recommendations from the prediction result.
+  // pass predictions and feature_importances from predictRisks plus the
+  // assessmentId it gave us so the backend can attach them to the stored row.
   generateRecommendations: (predictions, featureImportances, assessmentId) =>
     api.post('/generate/recommendations', {
       predictions,

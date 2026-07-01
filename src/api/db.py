@@ -1,18 +1,15 @@
-"""
-db.py — minimal analytics persistence.
+"""saves submissions to a database for later analysis.
 
-Appends one row per real submission to a single flat `submissions` table:
-the 42 form answers (one column per question), the 7 risk levels + 7 scores,
-and the recommendation summary + source.
+each real submission is one row: the 42 form answers, the 7 risk levels + 7
+scores, and later the recommendation summary + source.
 
-Design notes:
-- If DATABASE_URL is not set, this module is a silent no-op — the app runs fine
-  without a database (local dev, or before Neon is wired up). Same best-effort
-  philosophy as the Gemini fallback: analytics must never break the user flow.
-- Writes are wrapped so a DB hiccup (e.g. Neon waking from scale-to-zero) is
-  logged and swallowed, never raised to the request.
-- One flat table, viewed directly in Neon's table editor — no ORM models, no
-  migrations. Deliberately simple: the goal is just to collect data.
+if DATABASE_URL is not set this module just does nothing, so the app still runs
+fine locally or before the db is set up (same idea as the gemini fallback,
+analytics should never break the normal flow). db writes are wrapped in
+try/except so a hiccup (like neon waking up) is logged and ignored, never raised
+to the request. it's one flat table i can look at directly in neon, no orm
+models and no migrations, kept simple on purpose since the point is just to
+collect data.
 """
 
 import os
@@ -24,11 +21,11 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB
 
-# JSONB on Postgres (queryable), plain JSON on other dialects (e.g. SQLite in tests).
+# JSONB on postgres (queryable), plain JSON on anything else like sqlite in tests
 _JSON_TYPE = JSON().with_variant(JSONB(), "postgresql")
 
 
-# ── Field lists (mirror HealthInput in main.py) ───────────────────────────────
+# these field lists match HealthInput in main.py
 FORM_FLOAT = [
     "age", "height_cm", "weight_kg", "bmi",
     "avg_sleep_hours", "screen_time_hours", "water_intake_liters",
@@ -49,20 +46,20 @@ FORM_TEXT = [
     "menstrual_regularity",
 ]
 
-# Base names → the predictions dict has "{base}_level" (text) and "{base}_score" (float)
+# base names. the predictions dict has "{base}_level" (text) and "{base}_score" (float)
 RISK_DOMAINS = [
     "diabetes_risk", "heart_disease_risk", "hypertension_risk", "obesity_risk",
     "mental_health_risk", "respiratory_risk", "general_physical_health",
 ]
 
 
-# ── Table definition ──────────────────────────────────────────────────────────
+# table setup
 _metadata = MetaData()
 
 _columns = [
     Column("id", Integer, primary_key=True, autoincrement=True),
     Column("created_at", DateTime(timezone=True), server_default=func.now()),
-    # Links the recommendations (added later) back to this submission.
+    # links the recommendations (added later) back to this submission
     Column("assessment_id", Text, unique=True, index=True),
 ]
 for _f in FORM_FLOAT:
@@ -74,7 +71,7 @@ for _f in FORM_TEXT:
 for _d in RISK_DOMAINS:
     _columns.append(Column(f"{_d}_level", Text))
     _columns.append(Column(f"{_d}_score", Float))
-# Recommendations — NULL until (and unless) the user clicks "Get Recommendations".
+# recommendations stay null until the user actually clicks "get recommendations"
 _columns.append(Column("recommendation_summary", Text))
 _columns.append(Column("recommendation_source", Text))
 _columns.append(Column("recommendations", _JSON_TYPE))  # full items for analytics
@@ -82,40 +79,40 @@ _columns.append(Column("recommendations", _JSON_TYPE))  # full items for analyti
 submissions = Table("submissions", _metadata, *_columns)
 
 
-# ── Engine ────────────────────────────────────────────────────────────────────
-engine = None  # populated by init_db()
+# engine gets set inside init_db()
+engine = None
 
 
 def _normalise_url(url: str) -> str:
-    # Some providers hand out the legacy "postgres://" scheme, which SQLAlchemy
-    # no longer accepts. Neon uses "postgresql://" already, but normalise anyway.
+    # some providers still hand out the old "postgres://" scheme which sqlalchemy
+    # doesn't accept anymore. neon already uses "postgresql://" but fix it anyway.
     if url.startswith("postgres://"):
         return url.replace("postgres://", "postgresql://", 1)
     return url
 
 
 def init_db() -> None:
-    """Create the engine and ensure the table exists. Safe to call at startup."""
+    """make the engine and create the table if needed. safe to call at startup."""
     global engine
     raw = os.getenv("DATABASE_URL")
     if not raw:
-        print("   No DATABASE_URL set — submissions will NOT be stored")
+        print("   no DATABASE_URL set, submissions will not be stored")
         engine = None
         return
     try:
         engine = create_engine(
             _normalise_url(raw),
-            pool_pre_ping=True,   # survives Neon scale-to-zero (drops stale conns)
+            pool_pre_ping=True,   # handles neon dropping idle connections
             pool_recycle=300,
         )
-        _metadata.create_all(engine)  # creates `submissions` if it doesn't exist
-        print("   Database ready — submissions will be stored")
+        _metadata.create_all(engine)  # makes the submissions table if it's missing
+        print("   database ready, submissions will be stored")
     except Exception as e:
-        print(f"   Database unavailable ({type(e).__name__}) — submissions will NOT be stored")
+        print(f"   database not available ({type(e).__name__}), submissions will not be stored")
         engine = None
 
 
-# ── Safe coercion helpers ─────────────────────────────────────────────────────
+# small helpers to convert values without crashing on bad input
 def _to_float(v: Any) -> Optional[float]:
     try:
         return float(v)
@@ -130,17 +127,14 @@ def _to_int(v: Any) -> Optional[int]:
         return None
 
 
-# ── Save ──────────────────────────────────────────────────────────────────────
 def insert_submission(
     assessment_id: str,
     form_data: Dict[str, Any],
     predictions: Dict[str, Any],
 ) -> None:
-    """Append one row at prediction time: the form answers + the 7 levels/scores.
-    `recommendations` is left NULL — it gets filled in later IF the user clicks
-    "Get Recommendations". Best-effort: any failure is logged and swallowed.
-
-    Meant to run as a FastAPI background task, so it never delays the response."""
+    """save one row at prediction time: the form answers + the 7 levels/scores.
+    recommendations get filled in later if the user asks for them. runs as a
+    background task so it never slows the response, and any error is just logged."""
     if engine is None:
         return
     try:
@@ -168,8 +162,8 @@ def update_recommendations(
     rec_source: Optional[str],
     rec_full: Optional[Dict[str, Any]],
 ) -> None:
-    """Fill in the recommendations for a previously-inserted submission.
-    Best-effort: logged and swallowed on failure. Runs as a background task."""
+    """fill in the recommendations for a row we already inserted. best effort,
+    logged and ignored on failure. also runs as a background task."""
     if engine is None or not assessment_id:
         return
     try:

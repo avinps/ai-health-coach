@@ -2,7 +2,7 @@
 
 import React, { useState, useMemo } from 'react';
 
-// Ideal weight helper (WHO BMI 22.5 midpoint for healthy range (18.5–25))
+// Ideal weight helper (WHO BMI 22.5 midpoint for healthy range (18.5-25))
 // Returns the weight in kg that corresponds to BMI 22.5 for a given height.
 function calcIdealWeight(height_cm) {
   if (!height_cm || height_cm <= 0) return null;
@@ -209,7 +209,7 @@ const INITIAL_DATA = {
   muscleLevel:      '',         // 'Beginner' | 'Intermediate' | 'Advanced'
   workoutFrequency: '',         // '3' | '4' | '5' | '6' | '7'  (days/week)
   workoutLocation:  '',         // 'Home' | 'Gym'
-  homeEquipment:    '',         // free text — only shown when Home is selected
+  homeEquipment:    '',         // free text, only shows when Home is selected
   timePerSession:   '',         // '15 min' | '30 min' | '45 min' | '60 min'
 };
 
@@ -325,7 +325,7 @@ export default function PlanQuestionnaire({ onBack, onDone, predictions, userPro
             </Section>
 
             <Section title="Your Health Goal" icon="🎯">
-              {/* Goal selector — must come first so weight field reacts */}
+              {/* goal selector, must come first so the weight field reacts */}
               <Field label="What is your primary goal?" error={errors.goal} wide>
                 <OptionGroup value={data.goal} onChange={v => set('goal', v)} columns={3}
                   options={[
@@ -338,7 +338,7 @@ export default function PlanQuestionnaire({ onBack, onDone, predictions, userPro
               {/* Goal weight (conditional on goal type) */}
               {data.goal === 'Be Healthy' ? (
                 // Be Healthy: show auto-calculated ideal weight, no text input
-                <Field label="Your Ideal Weight" hint="Calculated from your height — no input needed" wide>
+                <Field label="Your Ideal Weight" hint="Calculated from your height, no input needed" wide>
                   <IdealWeightCard idealWeight={idealWeight} />
                   {!heightCm && (
                     <p style={{ fontSize: '12px', color: '#f59e0b', margin: '6px 0 0' }}>
@@ -394,11 +394,11 @@ export default function PlanQuestionnaire({ onBack, onDone, predictions, userPro
         {step === 2 && (
           <>
             <Section title="Food Preferences" icon="🍽️">
-              <Field label="Favourite Foods" hint="Optional — helps tailor your meal plan" wide>
-                <TextInput value={data.favoriteFoods} onChange={v => set('favoriteFoods', v)} placeholder="e.g. Chicken, rice, apples, pasta…" />
+              <Field label="Favourite Foods" hint="Optional, helps tailor your meal plan" wide>
+                <TextInput value={data.favoriteFoods} onChange={v => set('favoriteFoods', v)} placeholder="e.g. Chicken, rice, apples, pasta" />
               </Field>
-              <Field label="Disliked / Avoided Foods" hint="Optional — we'll exclude these" wide>
-                <TextInput value={data.dislikedFoods} onChange={v => set('dislikedFoods', v)} placeholder="e.g. Broccoli, fish, spicy food…" />
+              <Field label="Disliked / Avoided Foods" hint="Optional, we'll exclude these" wide>
+                <TextInput value={data.dislikedFoods} onChange={v => set('dislikedFoods', v)} placeholder="e.g. Broccoli, fish, spicy food" />
               </Field>
             </Section>
 
@@ -482,7 +482,7 @@ export default function PlanQuestionnaire({ onBack, onDone, predictions, userPro
                   <TextInput
                     value={data.homeEquipment}
                     onChange={v => set('homeEquipment', v)}
-                    placeholder="e.g. Dumbbells, resistance bands, yoga mat, pull-up bar…"
+                    placeholder="e.g. Dumbbells, resistance bands, yoga mat, pull-up bar"
                   />
                 </Field>
               )}

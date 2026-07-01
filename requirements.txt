@@ -1,16 +1,16 @@
-# ── API framework ──────────────────────────────────────────────────────────────
+# api framework
 fastapi>=0.110.0
 uvicorn[standard]>=0.28.0
 pydantic>=2.6.0
 
-# ── Rate limiting ──────────────────────────────────────────────────────────────
-# slowapi provides per-IP rate limiting on FastAPI endpoints.
+# rate limiting
+# slowapi does per ip rate limiting on the fastapi endpoints
 slowapi>=0.1.9
 
-# ── ML / Data ─────────────────────────────────────────────────────────────────
-# PINNED (==) to the exact versions the model pickles were saved with.
-# Do NOT loosen these to >= — a newer scikit-learn/numpy cannot unpickle the
-# models and startup fails with "ModuleNotFoundError: No module named '_loss'".
+# ml / data
+# these are pinned (==) to the exact versions the model pickles were saved with.
+# dont loosen them to >= because a newer scikit-learn/numpy cant unpickle the
+# models and startup breaks with "ModuleNotFoundError: No module named '_loss'".
 scikit-learn==1.8.0
 joblib>=1.3.2
 shap>=0.45.0
@@ -18,19 +18,19 @@ pandas>=2.2.0
 numpy==2.3.5
 scipy==1.17.1
 
-# ── Notebook / EDA ────────────────────────────────────────────────────────────
+# notebook / eda
 openpyxl>=3.1.0
 matplotlib>=3.8.0
 seaborn>=0.13.0
 
-# ── LLM (recommendations engine) ──────────────────────────────────────────────
-# Google Gen AI SDK — used by /generate/recommendations to synthesise risk-
-# reduction guidance. The endpoint falls back to a deterministic substrate if
-# no GEMINI_API_KEY is set, so this is required only to enable LLM-phrased output.
+# llm for the recommendations
+# google gen ai sdk, used by /generate/recommendations to write the
+# guidance. the endpoint falls back to a fixed substrate if no GEMINI_API_KEY
+# is set, so this is only needed for the llm phrased output.
 google-genai>=1.0.0
 
-# ── Database (analytics persistence) ──────────────────────────────────────────
-# SQLAlchemy + psycopg2 for storing submissions in Postgres (Neon). The app runs
-# fine without a DB — if DATABASE_URL is unset, persistence is a silent no-op.
+# database for saving submissions
+# sqlalchemy + psycopg2 to store submissions in postgres (neon). the app runs
+# fine without a db, if DATABASE_URL is unset persistence just does nothing.
 SQLAlchemy>=2.0.0
 psycopg2-binary>=2.9.9

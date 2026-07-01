@@ -1,23 +1,18 @@
-"""
-recommendations.py — Risk-reduction recommendation engine.
+"""makes the risk-reduction recommendations.
 
-Design philosophy (hybrid, not pure-LLM):
-    The LLM never invents medical claims. We maintain a curated, evidence-aligned
-    SUBSTRATE of recommendation building blocks per risk domain. The LLM's only
-    job is to SELECT the relevant blocks for whichever risks are elevated for THIS
-    user, DEDUPLICATE overlapping advice across domains (so "exercise regularly"
-    doesn't appear five times), PRIORITISE by the user's own SHAP drivers, and
-    PHRASE it into one coherent summary. If the LLM is unavailable, over quota, or
-    returns malformed output, we fall back to a deterministic assembly straight
-    from the substrate — so the endpoint always returns something useful.
+this is a hybrid, not pure-llm. i keep a curated list (the "substrate") of
+recommendation building blocks for each risk area, and the llm never invents
+medical claims. all the llm does is pick the blocks that matter for whichever
+risks are high for this user, remove overlapping advice (so "exercise regularly"
+doesn't show up five times), order things by the user's own shap drivers, and
+phrase it into one summary. if the llm is missing, over quota, or returns junk,
+i just build the output straight from the substrate instead, so the endpoint
+always returns something.
 
-    This keeps health advice anchored to vetted content while using the LLM for the
-    one thing it is genuinely good at here: synthesis across overlapping conditions.
-
-None of the substrate content is novel or controversial — it is standard public-
-health guidance (DASH, Mediterranean-style eating, WHO activity guidance, etc.).
-It is intentionally non-prescriptive and is paired with a "not medical advice"
-disclaimer in the UI.
+none of the substrate content is new or controversial, it's standard public
+health advice (DASH, mediterranean-style eating, WHO activity guidance, etc). it
+stays non-prescriptive and the ui shows a "not medical advice" disclaimer next
+to it.
 """
 
 import json
@@ -26,17 +21,16 @@ import time
 from typing import Any, Dict, List, Optional
 
 
-# ── LLM retry configuration ───────────────────────────────────────────────────
-# Gemini occasionally returns transient errors (503 "high demand", 429 rate limit)
-# or a one-off malformed response. These clear on a quick re-try, so we attempt the
-# call a few times with a short exponential backoff before giving up and falling
-# back. Retries ONLY happen on transient errors — a real error (bad key, unknown
-# model) is not retried. On a successful first attempt there is zero added delay.
-# Tunable via env vars without touching code.
+# llm retry settings.
+# gemini sometimes returns a transient error (503 "high demand", 429 rate limit)
+# or a one-off broken response. those usually clear on a quick retry, so try the
+# call a few times with a short exponential backoff before giving up. only retry
+# on transient errors, a real error (bad key, unknown model) is not retried. on a
+# successful first try there's zero extra delay. can be tuned with env vars.
 LLM_MAX_ATTEMPTS = max(1, int(os.getenv("LLM_MAX_ATTEMPTS", "3")))      # total tries
 LLM_RETRY_BASE_DELAY = float(os.getenv("LLM_RETRY_BASE_DELAY", "0.8"))  # seconds
 
-# Substrings that mark an error as worth retrying (matched case-insensitively).
+# substrings that mean "this error is worth retrying" (matched case-insensitively)
 _RETRYABLE_SIGNALS = (
     "503", "unavailable", "high demand",
     "429", "resource_exhausted", "rate limit",
@@ -45,16 +39,16 @@ _RETRYABLE_SIGNALS = (
 
 
 def _is_retryable(err: Exception) -> bool:
-    """True if this error is transient and a re-try might succeed."""
-    # A truncated/garbled JSON response can be a one-off — worth one more shot.
+    """true if this error is transient and a retry might work."""
+    # a truncated/garbled json response can be a one-off, so give it one more shot
     if isinstance(err, json.JSONDecodeError):
         return True
     msg = str(err).lower()
     return any(sig in msg for sig in _RETRYABLE_SIGNALS)
 
 
-# ── Domain display names ──────────────────────────────────────────────────────
-# Used both in the prompt and in the per-item `targets` tags shown in the UI.
+# display names for each domain.
+# used in the prompt and in the per-item `targets` tags shown in the ui.
 DOMAIN_LABELS: Dict[str, str] = {
     "diabetes_risk_level":            "diabetes",
     "heart_disease_risk_level":       "heart disease",
@@ -65,17 +59,17 @@ DOMAIN_LABELS: Dict[str, str] = {
     "general_physical_health_level":  "general fitness",
 }
 
-# Which level values count as "elevated" (i.e. worth giving risk-reduction advice).
-# Risk domains use Low/Medium/High. general_physical_health uses Poor/Fair/Good/Excellent
+# which levels count as "elevated" (worth giving risk-reduction advice for).
+# risk domains use Low/Medium/High. general_physical_health uses Poor/Fair/Good/Excellent
 # where Poor/Fair are the concerning end.
 ELEVATED_LEVELS = {"High", "Medium", "Poor", "Fair"}
-# Severity rank for ordering — higher = address first.
+# how serious each level is, for ordering. higher = deal with it first.
 SEVERITY_RANK = {"High": 2, "Poor": 2, "Medium": 1, "Fair": 1}
 
 
-# ── Feature → human-readable label ────────────────────────────────────────────
-# Only the modifiable, recommendation-relevant drivers need a friendly label.
-# Anything not listed is humanised on the fly (see _humanise_feature).
+# turn a feature name into something readable.
+# only the modifiable, recommendation-relevant drivers really need a label here,
+# anything else gets cleaned up on the fly in _humanise_feature.
 FEATURE_LABELS: Dict[str, str] = {
     "exercise_level":           "physical activity level",
     "eat_fruits_daily":         "daily fruit intake",
@@ -118,12 +112,12 @@ def _humanise_feature(feat: str) -> str:
     return feat.replace("_", " ").strip()
 
 
-# ── Curated recommendation substrate ──────────────────────────────────────────
-# Keyed by domain. Each domain holds vetted building blocks. We deliberately key
-# by DOMAIN rather than (domain, level): the eat/avoid content for Medium vs High
-# diabetes is essentially the same set, differing only in intensity — and intensity
-# is handled by passing the level to the LLM as a modifier (gentle nudge for
-# Medium/Fair, firmer for High/Poor). This avoids ~21 near-duplicate blocks.
+# the curated recommendation substrate.
+# keyed by domain. each domain has vetted building blocks. i key by domain, not by
+# (domain, level), because the eat/avoid content for Medium vs High is basically the
+# same set, only the intensity differs, and intensity is handled by telling the llm
+# the level (gentle nudge for Medium/Fair, firmer for High/Poor). saves ~21 near
+# duplicate blocks.
 SUBSTRATE: Dict[str, Dict[str, List[str]]] = {
     "diabetes_risk_level": {
         "foods_eat": [
@@ -138,11 +132,11 @@ SUBSTRATE: Dict[str, Dict[str, List[str]]] = {
             "Sugary snacks and desserts",
         ],
         "exercise_do": [
-            "A 10–15 minute walk after meals to blunt blood-sugar spikes",
+            "A 10-15 minute walk after meals to blunt blood-sugar spikes",
             "Regular aerobic activity plus resistance training each week",
         ],
         "exercise_avoid": [
-            "Long uninterrupted stretches of sitting — break them up hourly",
+            "Long uninterrupted stretches of sitting, break them up hourly",
         ],
         "lifestyle_do": [
             "Manage weight if above a healthy range",
@@ -170,10 +164,10 @@ SUBSTRATE: Dict[str, Dict[str, List[str]]] = {
             "Brisk walking, cycling or swimming you can sustain",
         ],
         "exercise_avoid": [
-            "Sudden intense exertion if you are currently sedentary — build up gradually",
+            "Sudden intense exertion if you are currently sedentary, build up gradually",
         ],
         "lifestyle_do": [
-            "Stop smoking — the single biggest cardiovascular win",
+            "Stop smoking, the single biggest cardiovascular win",
             "Keep blood pressure and cholesterol in check",
             "Build in stress-management routines",
         ],
@@ -223,13 +217,13 @@ SUBSTRATE: Dict[str, Dict[str, List[str]]] = {
         ],
         "exercise_do": [
             "Combine aerobic activity with resistance training",
-            "Increase everyday movement — steps, stairs, standing breaks",
+            "Increase everyday movement, steps, stairs, standing breaks",
         ],
         "exercise_avoid": [
             "Long sedentary periods through the day",
         ],
         "lifestyle_do": [
-            "Protect 7–9 hours of sleep — poor sleep drives weight gain",
+            "Protect 7-9 hours of sleep, poor sleep drives weight gain",
             "Eat mindfully and slow down at meals",
         ],
         "lifestyle_avoid": [
@@ -247,7 +241,7 @@ SUBSTRATE: Dict[str, Dict[str, List[str]]] = {
             "Using alcohol as a way to cope",
         ],
         "exercise_do": [
-            "Regular physical activity — one of the most reliable mood boosters",
+            "Regular physical activity, one of the most reliable mood boosters",
             "Time outdoors or in nature when you can",
         ],
         "exercise_avoid": [
@@ -317,7 +311,7 @@ SUBSTRATE: Dict[str, Dict[str, List[str]]] = {
     },
 }
 
-# Maps the substrate's six block keys onto the output schema's category/direction.
+# maps the substrate's six block keys onto the output category/direction
 _BLOCK_TO_OUTPUT = {
     "foods_eat":      ("foods", "eat"),
     "foods_avoid":    ("foods", "avoid"),
@@ -329,14 +323,14 @@ _BLOCK_TO_OUTPUT = {
 
 DISCLAIMER = (
     "These suggestions are general, educational wellness information generated from "
-    "your inputs — not a medical diagnosis or treatment plan. Always consult a "
+    "your inputs, not a medical diagnosis or treatment plan. Always consult a "
     "qualified healthcare professional before making significant changes."
 )
 
 
-# ── Identify elevated risks + the user's personal modifiable drivers ──────────
+# find the elevated risks and the user's own modifiable drivers
 def _elevated_domains(predictions: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Return elevated domains, most-severe first."""
+    """return elevated domains, most serious first."""
     out = []
     for domain, label in DOMAIN_LABELS.items():
         level = predictions.get(domain)
@@ -356,10 +350,10 @@ def _top_drivers(
     domain: str,
     k: int = 4,
 ) -> List[str]:
-    """Top MODIFIABLE SHAP drivers for a domain, as readable labels.
+    """top modifiable shap drivers for a domain, as readable labels.
 
-    We only surface modifiable drivers — there is no point recommending the user
-    change their age or family history."""
+    only show modifiable ones, no point telling the user to change their age or
+    family history."""
     rows = feature_importances.get(domain, []) or []
     labels: List[str] = []
     for r in rows:
@@ -373,7 +367,7 @@ def _top_drivers(
     return labels
 
 
-# ── Prompt construction ───────────────────────────────────────────────────────
+# building the prompt
 SYSTEM_INSTRUCTION = (
     "You are a careful health-education assistant for a risk-reduction tool. "
     "You DO NOT invent medical claims. You are given vetted recommendation "
@@ -388,8 +382,8 @@ def _build_prompt(
     elevated: List[Dict[str, Any]],
     drivers_by_domain: Dict[str, List[str]],
 ) -> str:
-    """Assemble the user-specific prompt from elevated domains + their drivers
-    + the relevant substrate blocks."""
+    """build the user-specific prompt from the elevated domains + their drivers
+    + the matching substrate blocks."""
     lines: List[str] = []
     lines.append("USER RISK PROFILE (elevated areas, most important first):")
     for e in elevated:
@@ -397,7 +391,7 @@ def _build_prompt(
         drv = drivers_by_domain.get(e["domain"], [])
         drv_txt = ", ".join(drv) if drv else "no specific modifiable driver stood out"
         lines.append(
-            f"- {e['label']} — {sev} risk. "
+            f"- {e['label']} - {sev} risk. "
             f"This user's main modifiable drivers: {drv_txt}."
         )
 
@@ -414,14 +408,14 @@ def _build_prompt(
 
     lines.append(
         "\nTASK:\n"
-        "1. Write a short `summary` (2–4 sentences) that explains, in plain "
+        "1. Write a short `summary` (2-4 sentences) that explains, in plain "
         "language, which areas are elevated and ties them to this user's actual "
         "drivers listed above. Lead with the highest-risk area.\n"
         "2. Produce de-duplicated recommendations. If the same advice helps "
         "several areas, include it ONCE and tag ALL the areas it helps in "
         "`targets`. Order items so the ones addressing this user's drivers and "
         "highest-risk areas come first.\n"
-        "3. Only use the vetted material above — do not add new foods, exercises "
+        "3. Only use the vetted material above, do not add new foods, exercises "
         "or claims. Lightly rephrase for warmth, but keep the meaning.\n\n"
         "Return JSON EXACTLY in this shape:\n"
         "{\n"
@@ -438,7 +432,7 @@ def _build_prompt(
     return "\n".join(lines)
 
 
-# ── Output validation / repair ────────────────────────────────────────────────
+# checking and cleaning the llm output
 _CATEGORIES = {
     "foods":     ("eat", "avoid"),
     "exercise":  ("do", "avoid"),
@@ -447,7 +441,7 @@ _CATEGORIES = {
 
 
 def _clean_item(item: Any, valid_targets: set) -> Optional[Dict[str, Any]]:
-    """Coerce one recommendation item into {text, targets}; drop if unusable."""
+    """turn one recommendation item into {text, targets}, drop it if unusable."""
     if isinstance(item, str):
         text, targets = item.strip(), []
     elif isinstance(item, dict):
@@ -462,7 +456,7 @@ def _clean_item(item: Any, valid_targets: set) -> Optional[Dict[str, Any]]:
 
 
 def _validate(data: Any, valid_targets: set) -> Optional[Dict[str, Any]]:
-    """Return a clean output dict, or None if the structure is unsalvageable."""
+    """return a clean output dict, or None if the structure is too broken to use."""
     if not isinstance(data, dict):
         return None
     summary = str(data.get("summary", "")).strip()
@@ -492,14 +486,14 @@ def _validate(data: Any, valid_targets: set) -> Optional[Dict[str, Any]]:
     return {"summary": summary, "recommendations": recs_out}
 
 
-# ── Deterministic fallback (no LLM) ───────────────────────────────────────────
+# the deterministic fallback (no llm)
 def _deterministic(elevated: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Assemble recommendations straight from the substrate, de-duplicated, with
-    every contributing area tagged. Used when the LLM is unavailable or invalid."""
+    """build recommendations straight from the substrate, de-duplicated, with every
+    contributing area tagged. used when the llm is missing or invalid."""
     out: Dict[str, Dict[str, List[Dict[str, Any]]]] = {
         cat: {d: [] for d in dirs} for cat, dirs in _CATEGORIES.items()
     }
-    # text(lower) -> item ref, so we can append targets when advice repeats.
+    # text(lower) -> item ref, so we can add targets when the same advice repeats
     index: Dict[str, Dict[str, Any]] = {}
 
     for e in elevated:  # already severity-sorted
@@ -515,9 +509,9 @@ def _deterministic(elevated: List[Dict[str, Any]]) -> Dict[str, Any]:
                     index[key] = item
                     out[cat][direction].append(item)
 
-    # Cap each direction so the safety-net output stays readable. `elevated` is
-    # severity-sorted and items were appended in that order, so truncation keeps
-    # the highest-severity advice.
+    # cap each direction so the fallback output stays readable. elevated is
+    # severity-sorted and items were added in that order, so cutting keeps the
+    # highest-severity advice.
     MAX_PER_DIRECTION = 6
     for cat, dirs in out.items():
         for direction in dirs:
@@ -537,13 +531,13 @@ def _deterministic(elevated: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 def _maintenance() -> Dict[str, Any]:
-    """Positive response when nothing is elevated."""
+    """positive response when nothing is elevated."""
     g = SUBSTRATE["general_physical_health_level"]
     def wrap(texts):
         return [{"text": t, "targets": ["general fitness"]} for t in texts]
     return {
         "summary": (
-            "Good news — none of your risk areas came back elevated. The habits "
+            "Good news, none of your risk areas came back elevated. The habits "
             "below will help you maintain that across the board."
         ),
         "recommendations": {
@@ -554,23 +548,21 @@ def _maintenance() -> Dict[str, Any]:
     }
 
 
-# ── Public entry point ────────────────────────────────────────────────────────
+# the main entry point
 def generate(
     predictions: Dict[str, Any],
     feature_importances: Dict[str, List[Dict[str, Any]]],
     llm_call=None,
 ) -> Dict[str, Any]:
-    """
-    Build risk-reduction recommendations.
+    """build the risk-reduction recommendations.
 
-    Args:
-        predictions:          the `predictions` dict from /predict/risks.
-        feature_importances:  the `feature_importances` dict from /predict/risks.
-        llm_call:             optional callable (system_instruction, prompt) -> str
-                              returning raw model text. If None, or if it raises /
-                              returns invalid JSON, we fall back deterministically.
+    predictions:         the `predictions` dict from /predict/risks.
+    feature_importances: the `feature_importances` dict from /predict/risks.
+    llm_call:            optional callable (system_instruction, prompt) -> str that
+                         returns raw model text. if None, or if it raises / returns
+                         bad json, we fall back to the deterministic build.
 
-    Returns a dict: {summary, recommendations, source, disclaimer}.
+    returns a dict: {summary, recommendations, source, disclaimer}.
     """
     elevated = _elevated_domains(predictions)
 
@@ -588,7 +580,7 @@ def generate(
             try:
                 prompt = _build_prompt(elevated, drivers_by_domain)
                 raw = llm_call(SYSTEM_INSTRUCTION, prompt)
-                # Strip accidental code fences before parsing.
+                # strip any accidental code fences before parsing
                 cleaned = (raw or "").strip()
                 if cleaned.startswith("```"):
                     cleaned = cleaned.split("```", 2)[1]
@@ -600,7 +592,7 @@ def generate(
                     validated["source"] = "llm"
                     validated["disclaimer"] = DISCLAIMER
                     return validated
-                # Parsed but structurally unusable — treat like a retryable blip.
+                # parsed but not usable, treat it like a retryable blip
                 raise ValueError("LLM output failed validation (empty/invalid structure)")
             except Exception as e:
                 retryable = _is_retryable(e)
@@ -614,7 +606,7 @@ def generate(
                     )
                     time.sleep(delay)
                     continue
-                # Non-retryable, or out of attempts → give up and fall back.
+                # non-retryable, or out of attempts, so give up and fall back
                 reason = "no more attempts" if retryable else "non-retryable"
                 print(
                     f"[recommendations] Gemini failed ({reason}) after "

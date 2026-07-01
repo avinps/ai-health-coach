@@ -1,17 +1,14 @@
-/**
- * 5-Step Wizard
- * Covers all 42 features of synthetic_health_risk_75k_v1.csv
- *
- * Step 1: Demographics & Anthropometrics  (age, gender, height, weight → BMI)
- * Step 2: Lifestyle & Diet                (exercise, sleep, stress, diet, food habits)
- * Step 3: Work & Habits                   (employment, work type/stress, alcohol, smoking)
- * Step 4: Medical & Family History        (conditions, family history, symptoms)
- * Step 5: Symptoms & Mental Health        (fatigue, anxiety, physical symptoms, female-specific)
- */
+// 5 step form
+// covers all 42 features of the synthetic dataset
+// step 1: demographics and body stuff (age, gender, height, weight -> bmi)
+// step 2: lifestyle and diet (exercise, sleep, stress, diet, food habits)
+// step 3: work and habits (employment, work type/stress, alcohol, smoking)
+// step 4: medical and family history (conditions, family history, symptoms)
+// step 5: symptoms and mental health (fatigue, anxiety, physical symptoms, female specific)
 
 import React, { useState, useEffect } from 'react';
 
-// Tiny reusable components
+// small reusable bits
 
 function Field({ label, hint, error, children }) {
   return (
@@ -26,7 +23,7 @@ function Field({ label, hint, error, children }) {
   );
 }
 
-function Select({ value, onChange, options, placeholder = 'Select…' }) {
+function Select({ value, onChange, options, placeholder = 'Select...' }) {
   return (
     <select value={value} onChange={e => onChange(e.target.value)} style={fc.input}>
       <option value="">{placeholder}</option>
@@ -156,7 +153,7 @@ function StepBar({ current, total, labels }) {
 const STEP_LABELS = ['Demographics', 'Lifestyle & Diet', 'Work & Habits', 'Medical History', 'Symptoms'];
 const TOTAL_STEPS = 5;
 
-// Initial form state — all raw string values (API sends these pre-processed)
+// initial form state, all raw strings (backend does the encoding)
 const INITIAL = {
   // Step 1
   age: '', gender: '', height_cm: '', weight_kg: '',
@@ -188,11 +185,11 @@ function validateStep(step, form, bmi) {
   const errs = {};
   if (step === 1) {
     if (!form.age)        errs.age        = 'Required';
-    else if (form.age < 18 || form.age > 80) errs.age = 'Must be 18–80';
+    else if (form.age < 18 || form.age > 80) errs.age = 'Must be 18-80';
     if (!form.gender)     errs.gender     = 'Required';
     if (!form.height_cm)  errs.height_cm  = 'Required';
     if (!form.weight_kg)  errs.weight_kg  = 'Required';
-    if (bmi && (bmi < 14 || bmi > 55)) errs.bmi = 'BMI out of plausible range (14–55). Check height/weight.';
+    if (bmi && (bmi < 14 || bmi > 55)) errs.bmi = 'BMI out of plausible range (14-55). Check height/weight.';
   }
   if (step === 2) {
     if (!form.exercise_level)   errs.exercise_level   = 'Required';
@@ -322,7 +319,7 @@ export default function UnifiedForm({ onSubmit, isLoading, demoData }) {
       anxiety_level:          parseInt(form.anxiety_level),
       fatigue_level:          parseInt(form.fatigue_level),
 
-      // Categorical (sent as raw strings — API encodes them)
+      // categorical, sent as raw strings, backend encodes them
       gender:                       form.gender,
       exercise_level:               form.exercise_level,
       diet_type:                    form.diet_type,
@@ -355,7 +352,7 @@ export default function UnifiedForm({ onSubmit, isLoading, demoData }) {
       menstrual_regularity:         menstrual,
     };
 
-    // Existing conditions are for UI display only — not sent to the prediction API
+    // existing conditions are just for display, not sent to the api
     const existingConditions = {
       has_diabetes:      form.has_diabetes,
       has_heart_disease: form.has_heart_disease,
@@ -384,7 +381,7 @@ export default function UnifiedForm({ onSubmit, isLoading, demoData }) {
         <p style={{ color: '#64748b', fontSize: '15px', margin: '0 0 20px' }}>
           {TOTAL_STEPS} quick steps · All 42 health indicators · Your data stays private
         </p>
-        {/* Demo mode button — only shown when demoData is available */}
+        {/* demo button, only shows when demoData is passed in */}
         {demoData && (
           <button type="button" onClick={applyDemo} style={demoBtn.btn}>
             <span style={{ fontSize: '16px' }}>⚡</span>
@@ -399,7 +396,7 @@ export default function UnifiedForm({ onSubmit, isLoading, demoData }) {
         <div style={demoBtn.banner}>
           <span style={{ fontSize: '18px' }}>🧪</span>
           <div style={{ flex: 1 }}>
-            <strong>Demo Mode active</strong> — this is a sample profile of a 38-year-old
+            <strong>Demo Mode active</strong> - this is a sample profile of a 38-year-old
             male desk worker with moderate health risks.
             Edit any field to switch to your own data.
           </div>
@@ -429,7 +426,7 @@ export default function UnifiedForm({ onSubmit, isLoading, demoData }) {
         {step === 1 && (
           <>
             <StepSection title="Basic Demographics" icon="👤">
-              <Field label="Age" hint="18–80 years" error={errors.age}>
+              <Field label="Age" hint="18-80 years" error={errors.age}>
                 <NumberInput value={form.age} onChange={v => set('age', v)} min={18} max={80} placeholder="e.g. 35" />
               </Field>
               <Field label="Biological Sex" error={errors.gender}>
@@ -439,10 +436,10 @@ export default function UnifiedForm({ onSubmit, isLoading, demoData }) {
             </StepSection>
 
             <StepSection title="Anthropometrics" icon="📏">
-              <Field label="Height" hint="cm (140–200)" error={errors.height_cm}>
+              <Field label="Height" hint="cm (140-200)" error={errors.height_cm}>
                 <NumberInput value={form.height_cm} onChange={v => set('height_cm', v)} min={140} max={200} step={0.5} placeholder="e.g. 168" />
               </Field>
-              <Field label="Weight" hint="kg (35–180)" error={errors.weight_kg}>
+              <Field label="Weight" hint="kg (35-180)" error={errors.weight_kg}>
                 <NumberInput value={form.weight_kg} onChange={v => set('weight_kg', v)} min={35} max={180} step={0.1} placeholder="e.g. 72" />
               </Field>
               {bmi && (
@@ -472,7 +469,7 @@ export default function UnifiedForm({ onSubmit, isLoading, demoData }) {
                     { value: 'Active',    label: 'Active' },
                   ]} />
               </Field>
-              <Field label="Average Sleep Hours" hint="3–12 hours per night" error={errors.avg_sleep_hours}>
+              <Field label="Average Sleep Hours" hint="3-12 hours per night" error={errors.avg_sleep_hours}>
                 <NumberInput value={form.avg_sleep_hours} onChange={v => set('avg_sleep_hours', v)} min={3} max={12} step={0.5} placeholder="e.g. 7.0" />
               </Field>
               <Field label="Stress Level" hint="1 = minimal · 10 = extreme" error={errors.stress_level}>
@@ -499,10 +496,10 @@ export default function UnifiedForm({ onSubmit, isLoading, demoData }) {
                 <OptionGroup value={form.eat_processed_food} onChange={v => set('eat_processed_food', v)}
                   options={['Never','Rarely','Moderate','Heavy']} />
               </Field>
-              <Field label="Daily Water Intake" hint="0.5–5.0 litres" error={errors.water_intake_liters}>
+              <Field label="Daily Water Intake" hint="0.5-5.0 litres" error={errors.water_intake_liters}>
                 <NumberInput value={form.water_intake_liters} onChange={v => set('water_intake_liters', v)} min={0.5} max={5} step={0.1} placeholder="e.g. 2.0" />
               </Field>
-              <Field label="Meals Per Day" hint="1–6" error={errors.meal_frequency}>
+              <Field label="Meals Per Day" hint="1-6" error={errors.meal_frequency}>
                 <OptionGroup value={form.meal_frequency} onChange={v => set('meal_frequency', v)}
                   options={['1','2','3','4','5','6']} />
               </Field>
@@ -529,7 +526,7 @@ export default function UnifiedForm({ onSubmit, isLoading, demoData }) {
             </StepSection>
 
             <StepSection title="Lifestyle & Habits" icon="🌿">
-              <Field label="Screen Time Per Day" hint="0.5–18 hours (phone + computer + TV)" error={errors.screen_time_hours}>
+              <Field label="Screen Time Per Day" hint="0.5-18 hours (phone + computer + TV)" error={errors.screen_time_hours}>
                 <NumberInput value={form.screen_time_hours} onChange={v => set('screen_time_hours', v)} min={0.5} max={18} step={0.5} placeholder="e.g. 7.0" />
               </Field>
               <Field label="Alcohol Consumption" error={errors.alcohol_consumption}>
@@ -639,7 +636,7 @@ export default function UnifiedForm({ onSubmit, isLoading, demoData }) {
 
             <StepSection title="Diabetes Symptom Cluster" icon="🍭">
               <p style={{ gridColumn: '1/-1', margin: '-8px 0 4px', fontSize: '13px', color: '#64748b' }}>
-                These are clinically specific symptoms. Answer honestly — they help calibrate diabetes risk.
+                These are clinically specific symptoms. Answer honestly, they help calibrate diabetes risk.
               </p>
               <Field label="Frequent / Unusual Urination?" error={errors.frequent_urination}>
                 <YesNo value={form.frequent_urination} onChange={v => set('frequent_urination', v)} />
@@ -654,7 +651,7 @@ export default function UnifiedForm({ onSubmit, isLoading, demoData }) {
 
             {form.gender === 'Female' && (
               <StepSection title="Female-Specific" icon="♀️">
-                <Field label="Menstrual Cycle Regularity" hint="Post-menopausal → select N/A" error={errors.menstrual_regularity}>
+                <Field label="Menstrual Cycle Regularity" hint="Post-menopausal, select N/A" error={errors.menstrual_regularity}>
                   <OptionGroup value={form.menstrual_regularity} onChange={v => set('menstrual_regularity', v)}
                     options={['Regular','Irregular','Very Irregular','N/A']} />
                 </Field>
