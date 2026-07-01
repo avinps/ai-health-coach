@@ -571,8 +571,8 @@ def generate(
                 validated["disclaimer"] = DISCLAIMER
                 return validated
         except Exception:
-            pass  # fall through to deterministic
-
+            print(f"[recommendations] Gemini call failed: {type(e).__name__}: {e}")
+            
     result = _deterministic(elevated)
     result["source"] = "fallback"
     result["disclaimer"] = DISCLAIMER

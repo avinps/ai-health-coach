@@ -41,6 +41,20 @@ export async function checkServerAwake() {
   }
 }
 
+/**
+ * Fire-and-forget wake-up ping. Call once when the app loads so Render's free-tier
+ * instance starts spinning up in the background while the user is still filling in
+ * the form. We deliberately do NOT await or surface the result — simply hitting the
+ * endpoint is enough to trigger the cold start. By the time the user clicks
+ * "Analyse", the instance is usually already awake, so the real request is fast.
+ *
+ * Uses the long-timeout client so the connection is held open through a full cold
+ * start (~60s) rather than aborting early.
+ */
+export function wakeServer() {
+  api.get('/health').catch(() => { /* best-effort only — ignore all errors */ });
+}
+
 // Sanitise errors before they reach the UI.
 // Never show raw axios/network internals to the user.
 function sanitiseError(error) {

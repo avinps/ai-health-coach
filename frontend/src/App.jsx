@@ -1,8 +1,8 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import UnifiedForm          from './components/UnifiedForm';
 import Dashboard            from './components/Dashboard';
 import RecommendationsView  from './components/RecommendationsView';
-import { healthAPI, checkServerAwake } from './api';
+import { healthAPI, wakeServer } from './api';
 
 // ── Demo profile — pre-fills all 44 form fields with a realistic sample ────
 // 38-year-old male desk worker. Mixed risk: overweight, sedentary, moderate stress,
@@ -64,6 +64,12 @@ export default function App() {
   // Recommendations result (from /generate/recommendations)
   const [recommendations, setRecommendations] = useState(null);
   const [recsLoading,      setRecsLoading]     = useState(false);
+
+  // Wake the (free-tier) backend as soon as the app loads, so it's ready by the
+  // time the user finishes the form and clicks Analyse. Fire-and-forget.
+  useEffect(() => {
+    wakeServer();
+  }, []);
 
   // Phase 1: Analyse 
   const handleAnalyse = useCallback(async (formPayload, incomingExistingConditions = {}) => {
