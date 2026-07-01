@@ -155,7 +155,13 @@ def _gemini_call(system_instruction: str, prompt: str) -> str:
     """Blocking Gemini call. Run via asyncio.to_thread from the async endpoint.
 
     Uses the SDK's native JSON output mode (response_mime_type), which is far more
-    reliable than asking the model to 'return JSON' in the prompt alone."""
+    reliable than asking the model to 'return JSON' in the prompt alone.
+
+    thinking_budget=0 disables the model's internal 'thinking' step. gemini-2.5-flash
+    is a thinking model by default, and that reasoning consumes output tokens — which
+    can starve (and truncate) the actual JSON. This task is selection + phrasing, not
+    reasoning, so we turn thinking off: it makes the JSON reliable AND the call faster.
+    """
     from google.genai import types
     client = A["genai_client"]
     resp = client.models.generate_content(
@@ -165,7 +171,8 @@ def _gemini_call(system_instruction: str, prompt: str) -> str:
             system_instruction=system_instruction,
             response_mime_type="application/json",
             temperature=0.6,
-            max_output_tokens=2048,
+            max_output_tokens=8192,
+            thinking_config=types.ThinkingConfig(thinking_budget=0),
         ),
     )
     return resp.text

@@ -21,7 +21,36 @@ disclaimer in the UI.
 """
 
 import json
+import os
+import time
 from typing import Any, Dict, List, Optional
+
+
+# ── LLM retry configuration ───────────────────────────────────────────────────
+# Gemini occasionally returns transient errors (503 "high demand", 429 rate limit)
+# or a one-off malformed response. These clear on a quick re-try, so we attempt the
+# call a few times with a short exponential backoff before giving up and falling
+# back. Retries ONLY happen on transient errors — a real error (bad key, unknown
+# model) is not retried. On a successful first attempt there is zero added delay.
+# Tunable via env vars without touching code.
+LLM_MAX_ATTEMPTS = max(1, int(os.getenv("LLM_MAX_ATTEMPTS", "3")))      # total tries
+LLM_RETRY_BASE_DELAY = float(os.getenv("LLM_RETRY_BASE_DELAY", "0.8"))  # seconds
+
+# Substrings that mark an error as worth retrying (matched case-insensitively).
+_RETRYABLE_SIGNALS = (
+    "503", "unavailable", "high demand",
+    "429", "resource_exhausted", "rate limit",
+    "500", "internal", "deadline", "timeout", "temporarily",
+)
+
+
+def _is_retryable(err: Exception) -> bool:
+    """True if this error is transient and a re-try might succeed."""
+    # A truncated/garbled JSON response can be a one-off — worth one more shot.
+    if isinstance(err, json.JSONDecodeError):
+        return True
+    msg = str(err).lower()
+    return any(sig in msg for sig in _RETRYABLE_SIGNALS)
 
 
 # ── Domain display names ──────────────────────────────────────────────────────
@@ -555,25 +584,44 @@ def generate(
     valid_targets = {e["label"] for e in elevated}
 
     if llm_call is not None:
-        try:
-            prompt = _build_prompt(elevated, drivers_by_domain)
-            raw = llm_call(SYSTEM_INSTRUCTION, prompt)
-            # Strip accidental code fences before parsing.
-            cleaned = (raw or "").strip()
-            if cleaned.startswith("```"):
-                cleaned = cleaned.split("```", 2)[1]
-                if cleaned.lstrip().lower().startswith("json"):
-                    cleaned = cleaned.lstrip()[4:]
-            data = json.loads(cleaned)
-            validated = _validate(data, valid_targets)
-            if validated is not None:
-                validated["source"] = "llm"
-                validated["disclaimer"] = DISCLAIMER
-                return validated
-        except Exception as e:
-            # Temporary diagnostic — logs WHY the Gemini path fell back.
-            # Safe to leave in; it only prints, then falls through to deterministic.
-            print(f"[recommendations] Gemini call failed: {type(e).__name__}: {e}", flush=True)
+        for attempt in range(LLM_MAX_ATTEMPTS):
+            try:
+                prompt = _build_prompt(elevated, drivers_by_domain)
+                raw = llm_call(SYSTEM_INSTRUCTION, prompt)
+                # Strip accidental code fences before parsing.
+                cleaned = (raw or "").strip()
+                if cleaned.startswith("```"):
+                    cleaned = cleaned.split("```", 2)[1]
+                    if cleaned.lstrip().lower().startswith("json"):
+                        cleaned = cleaned.lstrip()[4:]
+                data = json.loads(cleaned)
+                validated = _validate(data, valid_targets)
+                if validated is not None:
+                    validated["source"] = "llm"
+                    validated["disclaimer"] = DISCLAIMER
+                    return validated
+                # Parsed but structurally unusable — treat like a retryable blip.
+                raise ValueError("LLM output failed validation (empty/invalid structure)")
+            except Exception as e:
+                retryable = _is_retryable(e)
+                is_last = attempt == LLM_MAX_ATTEMPTS - 1
+                if retryable and not is_last:
+                    delay = LLM_RETRY_BASE_DELAY * (2 ** attempt)
+                    print(
+                        f"[recommendations] Gemini attempt {attempt + 1}/{LLM_MAX_ATTEMPTS} "
+                        f"failed ({type(e).__name__}: {e}); retrying in {delay:.1f}s",
+                        flush=True,
+                    )
+                    time.sleep(delay)
+                    continue
+                # Non-retryable, or out of attempts → give up and fall back.
+                reason = "no more attempts" if retryable else "non-retryable"
+                print(
+                    f"[recommendations] Gemini failed ({reason}) after "
+                    f"{attempt + 1} attempt(s): {type(e).__name__}: {e}",
+                    flush=True,
+                )
+                break
 
     result = _deterministic(elevated)
     result["source"] = "fallback"
