@@ -129,10 +129,18 @@ code {
     min-width: 0;
     justify-content: center;
     text-align: center;
-    padding: 9px 5px;
-    font-size: 11.5px;
-    overflow-wrap: anywhere;
+    padding: 9px 4px;
+    font-size: 11px;
+    overflow-wrap: normal;
+    word-break: keep-all;
+    hyphens: none;
+    line-height: 1.25;
   }
+}
+
+@media (max-width: 380px) {
+  .app-step { font-size: 10px; padding: 9px 3px; gap: 5px; }
+  .app-step-row { padding: 0 6px; }
 }
 
 /* --- Multi-step form footer (Back / step counter / Continue) --- */
