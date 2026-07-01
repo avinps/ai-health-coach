@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import pickle
@@ -7,6 +8,13 @@ from typing import Any, Dict, List, Literal, Optional
 
 import numpy as np
 import pandas as pd
+
+# Recommendation engine (curated substrate + Gemini synthesis + fallback).
+# try/except so this works whether run as `src.api.main:app` or directly.
+try:
+    from . import recommendations as recs
+except ImportError:  # pragma: no cover
+    import recommendations as recs
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -122,7 +130,45 @@ async def startup():
         pp = A["pipeline"]
         print(f"   Features loaded: {len(pp['feature_columns'])}")
         print(f"   Target models:   {len(pp['target_configs'])}")
+
+    # ── Gemini client for the recommendations endpoint ────────────────────────
+    # Optional: if no API key (or the package isn't installed), recommendations
+    # silently fall back to the deterministic substrate assembly. The app still
+    # boots and /predict/risks is unaffected.
+    A["genai_client"] = None
+    A["gemini_model"] = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    _gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    if _gemini_key:
+        try:
+            from google import genai
+            A["genai_client"] = genai.Client(api_key=_gemini_key)
+            print(f"   Gemini client ready (model: {A['gemini_model']})")
+        except Exception:
+            print("   Gemini unavailable — recommendations will use deterministic fallback")
+    else:
+        print("   No GEMINI_API_KEY set — recommendations will use deterministic fallback")
+
     print("✅ Startup complete.\n")
+
+
+def _gemini_call(system_instruction: str, prompt: str) -> str:
+    """Blocking Gemini call. Run via asyncio.to_thread from the async endpoint.
+
+    Uses the SDK's native JSON output mode (response_mime_type), which is far more
+    reliable than asking the model to 'return JSON' in the prompt alone."""
+    from google.genai import types
+    client = A["genai_client"]
+    resp = client.models.generate_content(
+        model=A["gemini_model"],
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            system_instruction=system_instruction,
+            response_mime_type="application/json",
+            temperature=0.6,
+            max_output_tokens=2048,
+        ),
+    )
+    return resp.text
 
 
 # Feature importance helpers 
@@ -827,3 +873,46 @@ async def predict_risks(request: Request, inp: HealthInput):
         "explanation":         explanation,
         "feature_importances": feature_importances,
     }
+
+
+# ── Recommendations ───────────────────────────────────────────────────────────
+class RecommendationRequest(BaseModel):
+    """Echoes the relevant parts of the /predict/risks response back to us.
+
+    The frontend already holds both objects after prediction, so no new health
+    data is collected here — we only need the risk levels and the per-domain SHAP
+    drivers to build risk-reduction guidance."""
+    predictions: Dict[str, Any] = Field(default_factory=dict)
+    feature_importances: Dict[str, Any] = Field(default_factory=dict)
+
+
+@app.post("/generate/recommendations")
+@limiter.limit("20/minute")
+async def generate_recommendations(request: Request, inp: RecommendationRequest):
+    """
+    Turn risk predictions + their SHAP drivers into risk-reduction recommendations
+    (foods / exercise / lifestyle, each split into do-or-eat vs avoid).
+
+    Hybrid engine: a curated, vetted substrate supplies the actual health content;
+    Gemini selects, de-duplicates, prioritises by the user's own drivers, and
+    phrases it. If Gemini is unavailable or returns malformed output, we fall back
+    to a deterministic assembly from the same substrate — so this endpoint always
+    returns something useful.
+    """
+    if not inp.predictions:
+        raise HTTPException(422, "No predictions provided. Run a risk assessment first.")
+
+    llm = _gemini_call if A.get("genai_client") is not None else None
+    try:
+        # Run the whole thing (including the blocking Gemini call) off the event loop.
+        result = await asyncio.to_thread(
+            recs.generate, inp.predictions, inp.feature_importances or {}, llm
+        )
+    except Exception:
+        # recs.generate has its own internal fallback, so this should never fire —
+        # but never let an unexpected error leak to the client.
+        raise HTTPException(
+            503, "Could not generate recommendations right now. Please try again."
+        )
+
+    return {"status": "success", **result}

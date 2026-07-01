@@ -102,6 +102,19 @@ export const healthAPI = {
       .catch(sanitiseError);
   },
 
+  /**
+   * Generate risk-reduction recommendations from the prediction result.
+   * Pass the `predictions` and `feature_importances` objects returned by
+   * predictRisks — no new health data is collected.
+   */
+  generateRecommendations: (predictions, featureImportances) =>
+    api.post('/generate/recommendations', {
+      predictions,
+      feature_importances: featureImportances || {},
+    })
+      .then(r => r.data)
+      .catch(sanitiseError),
+
   healthCheck: () =>
     api.get('/health')
       .then(r => r.data)

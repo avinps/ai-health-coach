@@ -19,3 +19,9 @@ scipy>=1.12.0
 openpyxl>=3.1.0
 matplotlib>=3.8.0
 seaborn>=0.13.0
+
+# ── LLM (recommendations engine) ──────────────────────────────────────────────
+# Google Gen AI SDK — used by /generate/recommendations to synthesise risk-
+# reduction guidance. The endpoint falls back to a deterministic substrate if
+# no GEMINI_API_KEY is set, so this is required only to enable LLM-phrased output.
+google-genai>=1.0.0

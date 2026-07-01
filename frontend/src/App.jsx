@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from 'react';
-import UnifiedForm        from './components/UnifiedForm';
-import Dashboard          from './components/Dashboard';
-import PlanQuestionnaire  from './components/PlanQuestionnaire';
+import UnifiedForm          from './components/UnifiedForm';
+import Dashboard            from './components/Dashboard';
+import RecommendationsView  from './components/RecommendationsView';
 import { healthAPI, checkServerAwake } from './api';
 
 // ── Demo profile — pre-fills all 44 form fields with a realistic sample ────
@@ -34,7 +34,7 @@ const DEMO_PROFILE = {
   menstrual_regularity: 'N/A',
 };
 
-// Views: 'form' | 'dashboard' | 'questionnaire' | 'plan-ready'
+// Views: 'form' | 'dashboard' | 'recommendations'
 export default function App() {
   const [view,        setView]        = useState('form');
   const [isLoading,   setIsLoading]   = useState(false);
@@ -61,8 +61,9 @@ export default function App() {
   const [isWaking,      setIsWaking]      = useState(false);
   const [wakeProgress,  setWakeProgress]  = useState(0);
 
-  // Phase 3 — plan preferences (stored for later plan generation)
-  const [planAnswers, setPlanAnswers] = useState(null);
+  // Recommendations result (from /generate/recommendations)
+  const [recommendations, setRecommendations] = useState(null);
+  const [recsLoading,      setRecsLoading]     = useState(false);
 
   // Phase 1: Analyse 
   const handleAnalyse = useCallback(async (formPayload, incomingExistingConditions = {}) => {
@@ -109,30 +110,29 @@ export default function App() {
     }
   }, []);
 
-  // Navigate to questionnaire 
-  const handleOpenQuestionnaire = () => {
-    setView('questionnaire');
+  // Generate recommendations from the existing prediction result.
+  // Reuses predictions + feature importances already in state — no new data collected.
+  const handleGetRecommendations = useCallback(async () => {
+    setRecsLoading(true);
+    setError(null);
     window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
-  // Questionnaire complete. To store answers, show dummy plan ready screen
-  const handleQuestionnaireSubmit = (answers) => {
-    setPlanAnswers(answers);
-    // Log for inspection during development
-    console.log('Plan preferences collected:', {
-      ...answers,
-      riskProfile: predictions,
-    });
-    setView('plan-ready');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
+    try {
+      const res = await healthAPI.generateRecommendations(predictions, featureImportances);
+      setRecommendations(res);
+      setView('recommendations');
+    } catch (e) {
+      setError(e.message || 'Could not generate recommendations. Please try again.');
+    } finally {
+      setRecsLoading(false);
+    }
+  }, [predictions, featureImportances]);
 
   // Full reset 
   const handleReset = () => {
     setView('form');
     setPredictions(null);
     setExplanation(null);
-    setPlanAnswers(null);
+    setRecommendations(null);
     setUserProfile({ weight_kg: null, height_cm: null });
     setFormData(null);
     setFeatureImportances({});
@@ -143,8 +143,8 @@ export default function App() {
   };
 
   // Step indicator config per view 
-  const STEPS = ['Risk Assessment', 'Your Dashboard', 'Your Plan'];
-  const stepIndex = { form: 0, dashboard: 1, questionnaire: 2, 'plan-ready': 2 };
+  const STEPS = ['Risk Assessment', 'Your Dashboard', 'Recommendations'];
+  const stepIndex = { form: 0, dashboard: 1, recommendations: 2 };
   const currentStep = stepIndex[view] ?? 0;
 
   return (
@@ -197,6 +197,17 @@ export default function App() {
         </div>
       )}
 
+      {/* Recommendations generation overlay */}
+      {recsLoading && (
+        <div style={s.overlay}>
+          <div style={s.overlayCard}>
+            <div style={s.spinner} />
+            <p style={s.spinnerText}>Building your risk-reduction recommendations…</p>
+            <p style={s.spinnerSub}>Tailoring guidance to your results.</p>
+          </div>
+        </div>
+      )}
+
       {/* Cold-start / waking overlay — shown when Render free tier is sleeping */}
       {isWaking && (
         <div style={s.overlay}>
@@ -237,66 +248,16 @@ export default function App() {
             existingConditions={existingConditions}
             formData={formData}
             onReset={handleReset}
-            onGeneratePlan={handleOpenQuestionnaire}
+            onGeneratePlan={handleGetRecommendations}
           />
         )}
 
-        {view === 'questionnaire' && (
-          <PlanQuestionnaire
-            predictions={predictions}
-            userProfile={userProfile}
-            onBack={() => setView('dashboard')}
-            onDone={handleQuestionnaireSubmit}
+        {view === 'recommendations' && recommendations && (
+          <RecommendationsView
+            data={recommendations}
+            onBack={() => { setView('dashboard'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+            onReset={handleReset}
           />
-        )}
-
-        {/* Plan ready placeholder (generation not implemented yet) */}
-        {view === 'plan-ready' && planAnswers && (
-          <div style={pr.wrap}>
-            <div style={pr.iconWrap}></div>
-            <h2 style={pr.title}>Plan generation coming soon!</h2>
-            <p style={pr.sub}>
-              Plan generation along with additional interesting features like Multi-user support with secure login, personalized health tracking, AI-based user clustering, customized meal & workout plans, adaptive recommendations, progress tracking, and an intelligent AI health assistant will be available in the future updates. Stay tuned!
-            </p>
-
-            {/* Summary of what was collected */}
-            <div style={pr.summaryCard}>
-              <h3 style={pr.summaryTitle}>Your Inputs</h3>
-              <div style={pr.grid}>
-                {[
-                  { label: 'Location',          value: `${planAnswers.state}, ${planAnswers.country}` },
-                  { label: 'Goal',               value: planAnswers.goal },
-                  { label: 'Goal Weight',        value: `${planAnswers.goalWeight} kg` },
-                  { label: 'Aggressiveness',     value: planAnswers.aggressiveness },
-                  { label: 'Cooking Ability',    value: planAnswers.cookingAbility },
-                  { label: 'Budget',             value: planAnswers.budget },
-                  { label: 'Meals / Day',        value: planAnswers.mealsPerDay },
-                  { label: 'Eating Out / Week',  value: `${planAnswers.eatingOutFreq}×` },
-                  { label: 'Muscle Level',       value: planAnswers.muscleLevel },
-                  { label: 'Workout Frequency',  value: planAnswers.workoutFrequency },
-                  { label: 'Workout Location',   value: planAnswers.workoutLocation },
-                  { label: 'Session Duration',   value: planAnswers.timePerSession },
-                  ...(planAnswers.favoriteFoods ? [{ label: 'Favourite Foods', value: planAnswers.favoriteFoods }] : []),
-                  ...(planAnswers.dislikedFoods ? [{ label: 'Disliked Foods',  value: planAnswers.dislikedFoods  }] : []),
-                  ...(planAnswers.homeEquipment ? [{ label: 'Home Equipment',  value: planAnswers.homeEquipment  }] : []),
-                ].map(({ label, value }) => (
-                  <div key={label} style={pr.item}>
-                    <span style={pr.itemLabel}>{label}</span>
-                    <span style={pr.itemValue}>{value}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', flexWrap: 'wrap' }}>
-              <button onClick={() => setView('questionnaire')} style={pr.backBtn}>
-                ← Edit Preferences
-              </button>
-              <button onClick={handleReset} style={pr.resetBtn}>
-                Start New Assessment
-              </button>
-            </div>
-          </div>
         )}
 
       </main>
@@ -336,20 +297,4 @@ const s = {
   main:        { maxWidth: '1060px', margin: '0 auto', padding: '40px 24px' },
   wakeBarTrack:{ height: '8px', background: '#e2e8f0', borderRadius: '999px', overflow: 'hidden', width: '100%' },
   wakeBarFill: { height: '100%', background: 'linear-gradient(90deg, #6366f1, #8b5cf6)', borderRadius: '999px', transition: 'width 0.4s ease' },
-};
-
-// Plan ready screen styles
-const pr = {
-  wrap:         { maxWidth: '700px', margin: '0 auto', textAlign: 'center' },
-  iconWrap:     { fontSize: '64px', marginBottom: '16px' },
-  title:        { fontSize: '28px', fontWeight: 800, color: '#0f172a', margin: '0 0 12px' },
-  sub:          { fontSize: '15px', color: '#64748b', lineHeight: 1.7, margin: '0 0 32px', maxWidth: '520px', marginLeft: 'auto', marginRight: 'auto' },
-  summaryCard:  { background: 'white', borderRadius: '16px', padding: '28px', boxShadow: '0 2px 12px rgba(0,0,0,0.08)', marginBottom: '32px', textAlign: 'left' },
-  summaryTitle: { fontSize: '16px', fontWeight: 700, color: '#0f172a', margin: '0 0 20px' },
-  grid:         { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' },
-  item:         { display: 'flex', flexDirection: 'column', gap: '3px', padding: '12px', background: '#f8fafc', borderRadius: '8px', border: '1px solid #f1f5f9' },
-  itemLabel:    { fontSize: '11px', fontWeight: 600, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.4px' },
-  itemValue:    { fontSize: '14px', fontWeight: 600, color: '#0f172a' },
-  backBtn:      { padding: '12px 22px', background: 'white', color: '#475569', border: '1px solid #cbd5e1', borderRadius: '10px', cursor: 'pointer', fontWeight: 600, fontSize: '14px' },
-  resetBtn:     { padding: '12px 22px', background: '#0f172a', color: 'white', border: 'none', borderRadius: '10px', cursor: 'pointer', fontWeight: 600, fontSize: '14px' },
 };

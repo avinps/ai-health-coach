@@ -497,11 +497,11 @@ export default function Dashboard({ predictions, featureImportances, existingCon
         <div style={{ flex: 1, minWidth: '220px' }}>
           <p style={{ fontSize: '18px', fontWeight: 800, color: '#0f172a', margin: '0 0 8px' }}>Ready to take action on your results?</p>
           <p style={{ fontSize: '14px', color: '#475569', margin: 0, lineHeight: 1.6 }}>
-            Answer a few quick questions about your goals, diet preferences, and fitness level to get a personalised meal and workout plan.
+            Get clear, personalised guidance on what to eat, which workouts to do, and the lifestyle changes most likely to bring your risks down — based on your results.
           </p>
         </div>
         <button onClick={onGeneratePlan} style={{ flexShrink: 0, padding: '16px 26px', background: 'linear-gradient(135deg, #059669, #10b981)', color: 'white', border: 'none', borderRadius: '12px', fontSize: '15px', fontWeight: 700, cursor: 'pointer', boxShadow: '0 4px 14px rgba(16,185,129,0.35)', whiteSpace: 'nowrap' }}>
-          Generate My Plan
+          Get Recommendations →
         </button>
       </div>
 
