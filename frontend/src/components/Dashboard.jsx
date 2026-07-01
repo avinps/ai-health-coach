@@ -90,7 +90,7 @@ function MiniGauge({ score, color, size }) {
   const circ = Math.PI * r;
   const dash = (pct / 100) * circ;
   return (
-    <svg viewBox="0 0 100 58" style={{ width: sz, height: sz * 0.55, display: 'block', margin: '0 auto' }}>
+    <svg viewBox="0 0 100 58" style={{ width: '100%', maxWidth: sz + 'px', height: 'auto', display: 'block', margin: '0 auto' }}>
       <path d="M 8 54 A 40 40 0 0 1 92 54" fill="none" stroke="#e2e8f0" strokeWidth="9" strokeLinecap="round" />
       <path d="M 8 54 A 40 40 0 0 1 92 54" fill="none" stroke={color} strokeWidth="9" strokeLinecap="round"
             strokeDasharray={dash + ' ' + circ} />
@@ -342,10 +342,9 @@ function RiskTile({ tile, score, level, onClick, existingCondition, wide }) {
       <div style={{ flex: isWide ? 2 : undefined }}>
         <p style={{ fontSize: isWide ? '17px' : '14px', fontWeight: 700, color: '#0f172a', margin: '0 0 2px' }}>{tile.label}</p>
         <p style={{ fontSize: '11px', color: '#64748b', margin: 0 }}>{tile.desc}</p>
-      </div>
-
-      <div style={{ position: 'absolute', bottom: '10px', right: '12px', fontSize: '10px', color: color + 'aa', fontWeight: 600, opacity: hovered ? 1 : 0.5, transition: 'opacity 0.2s' }}>
-        View details
+        <div style={{ marginTop: isWide ? '6px' : '8px', textAlign: 'right', fontSize: '10px', color: color + 'aa', fontWeight: 600, opacity: hovered ? 1 : 0.6, transition: 'opacity 0.2s' }}>
+          View details →
+        </div>
       </div>
     </div>
   );

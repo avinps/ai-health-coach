@@ -663,13 +663,13 @@ export default function UnifiedForm({ onSubmit, isLoading, demoData }) {
       </div>
 
       {/* Navigation buttons */}
-      <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+      <div className="form-nav" style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
         {step > 1 && (
           <button type="button" onClick={goBack} style={nav.back}>
             ← Back
           </button>
         )}
-        <div style={{ flex: 1, textAlign: 'center', color: '#94a3b8', fontSize: '12px' }}>
+        <div className="form-nav-step">
           Step {step} of {TOTAL_STEPS} · ~{stepCompletionText[step]}
         </div>
         {step < TOTAL_STEPS ? (

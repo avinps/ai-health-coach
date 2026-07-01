@@ -162,7 +162,7 @@ export default function App() {
 
       {/* header */}
       <header style={s.header}>
-        <div style={s.headerInner}>
+        <div style={s.headerInner} className="app-header-inner">
           <span style={s.logo}>🧬</span>
           <div>
             <h1 style={s.title}>AI Health Coach</h1>
@@ -174,12 +174,12 @@ export default function App() {
         </div>
 
         {/* 3 step indicator */}
-        <div style={s.stepRow}>
+        <div style={s.stepRow} className="app-step-row">
           {STEPS.map((label, i) => {
             const active = i === currentStep;
             const done   = i < currentStep;
             return (
-              <div key={i} style={{ ...s.step, ...(active ? s.stepActive : {}), ...(done ? s.stepDone : {}) }}>
+              <div key={i} className="app-step" style={{ ...s.step, ...(active ? s.stepActive : {}), ...(done ? s.stepDone : {}) }}>
                 <span style={s.stepNum}>{done ? '✓' : i + 1}</span>
                 {label}
               </div>
@@ -287,13 +287,13 @@ export default function App() {
 const s = {
   root:        { minHeight: '100vh', background: '#f0f4f8', fontFamily: "'Inter', system-ui, sans-serif" },
   header:      { background: 'linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%)', boxShadow: '0 4px 20px rgba(0,0,0,0.3)' },
-  headerInner: { display: 'flex', alignItems: 'center', gap: '16px', padding: '20px 40px 12px', flexWrap: 'wrap' },
+  headerInner: { display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' },
   logo:        { fontSize: '40px' },
   title:       { color: 'white', fontSize: '26px', margin: 0, fontWeight: 700 },
   subtitle:    { color: '#94a3b8', fontSize: '13px', margin: '3px 0 0' },
   resetBtn:    { marginLeft: 'auto', padding: '9px 18px', background: 'rgba(255,255,255,0.1)', color: 'white', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '8px', cursor: 'pointer', fontSize: '13px' },
-  stepRow:     { display: 'flex', padding: '0 40px', gap: '4px' },
-  step:        { display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 18px', fontSize: '13px', color: '#64748b', borderBottom: '3px solid transparent' },
+  stepRow:     { display: 'flex', gap: '4px' },
+  step:        { display: 'flex', alignItems: 'center', gap: '8px', color: '#64748b', borderBottom: '3px solid transparent' },
   stepActive:  { color: '#60a5fa', borderBottomColor: '#60a5fa', fontWeight: 600 },
   stepDone:    { color: '#34d399', borderBottomColor: '#34d399' },
   stepNum:     { width: '20px', height: '20px', borderRadius: '50%', background: 'rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: 700, color: 'white', flexShrink: 0 },
