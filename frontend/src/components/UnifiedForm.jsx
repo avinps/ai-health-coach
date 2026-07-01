@@ -362,7 +362,7 @@ export default function UnifiedForm({ onSubmit, isLoading, demoData }) {
       has_hypertension:  form.has_hypertension,
     };
 
-    onSubmit(payload, existingConditions);
+    onSubmit(payload, existingConditions, isDemoMode);
   };
 
   // Progress label 

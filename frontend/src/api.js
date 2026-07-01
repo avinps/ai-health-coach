@@ -104,27 +104,30 @@ export const healthAPI = {
    * Called with no arguments. When the server responds, the UI should go back
    * to normal loading state (handled by the caller resetting state on resolution).
    */
-  predictRisks: async (data, onWaking) => {
+  predictRisks: async (data, onWaking, isDemo = false) => {
     // Quick ping first — if server doesn't respond in 4s it's cold-starting
     const serverState = await checkServerAwake();
     if (serverState === 'sleeping' && typeof onWaking === 'function') {
       onWaking();
     }
-    // Now send the actual prediction request (70s timeout handles cold start wait)
-    return api.post('/predict/risks', data)
+    // Now send the actual prediction request (70s timeout handles cold start wait).
+    // is_demo tells the backend NOT to store demo submissions.
+    return api.post('/predict/risks', data, { params: { is_demo: !!isDemo } })
       .then(r => r.data)
       .catch(sanitiseError);
   },
 
   /**
    * Generate risk-reduction recommendations from the prediction result.
-   * Pass the `predictions` and `feature_importances` objects returned by
-   * predictRisks — no new health data is collected.
+   * Pass the `predictions` and `feature_importances` from predictRisks, plus the
+   * `assessmentId` it returned — the backend uses that id to attach the full
+   * recommendations to the stored submission. No new health data is collected.
    */
-  generateRecommendations: (predictions, featureImportances) =>
+  generateRecommendations: (predictions, featureImportances, assessmentId) =>
     api.post('/generate/recommendations', {
       predictions,
       feature_importances: featureImportances || {},
+      assessment_id: assessmentId || null,
     })
       .then(r => r.data)
       .catch(sanitiseError),

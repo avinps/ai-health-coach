@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import pickle
+import uuid
 import warnings
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
@@ -16,7 +17,13 @@ try:
 except ImportError:  # pragma: no cover
     import recommendations as recs
 
-from fastapi import FastAPI, HTTPException, Request
+# Analytics persistence (best-effort — no-op if DATABASE_URL is unset).
+try:
+    from . import db as db
+except ImportError:  # pragma: no cover
+    import db as db
+
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -147,6 +154,9 @@ async def startup():
             print("   Gemini unavailable — recommendations will use deterministic fallback")
     else:
         print("   No GEMINI_API_KEY set — recommendations will use deterministic fallback")
+
+    # ── Database for analytics (optional) ─────────────────────────────────────
+    db.init_db()
 
     print("✅ Startup complete.\n")
 
@@ -799,10 +809,19 @@ async def health():
 
 @app.post("/predict/risks")
 @limiter.limit("30/minute")
-async def predict_risks(request: Request, inp: HealthInput):
+async def predict_risks(
+    request: Request,
+    inp: HealthInput,
+    background_tasks: BackgroundTasks,
+    is_demo: bool = False,
+):
     """
     Run all 7 GradientBoosting models and return level + score for each target.
     Also returns SHAP explanation (or feature importances as fallback).
+
+    Every real (non-demo) submission is stored for analytics — the form answers +
+    the predicted levels/scores. An `assessment_id` is returned so a later
+    "Get Recommendations" call can attach its output to this same row.
     """
     for key, name in [("models", "all_models.pkl"), ("pipeline", "preprocessing_pipeline.pkl")]:
         if A.get(key) is None:
@@ -874,8 +893,18 @@ async def predict_risks(request: Request, inp: HealthInput):
 
     feature_importances = _get_per_model_shap(models, pipeline, X_scaled, inp.dict())
 
+    # Persist this submission (form + predictions) unless it's a demo run.
+    # Best-effort, in the background — never delays or breaks the response.
+    assessment_id = None
+    if not is_demo:
+        assessment_id = str(uuid.uuid4())
+        background_tasks.add_task(
+            db.insert_submission, assessment_id, inp.dict(), predictions
+        )
+
     return {
         "status":              "success",
+        "assessment_id":       assessment_id,
         "predictions":         predictions,
         "explanation":         explanation,
         "feature_importances": feature_importances,
@@ -888,14 +917,23 @@ class RecommendationRequest(BaseModel):
 
     The frontend already holds both objects after prediction, so no new health
     data is collected here — we only need the risk levels and the per-domain SHAP
-    drivers to build risk-reduction guidance."""
+    drivers to build risk-reduction guidance.
+
+    assessment_id (returned by /predict/risks) links this recommendation back to
+    the stored submission, so the full recommendations get saved onto that row.
+    It is null for demo submissions (which are never stored)."""
     predictions: Dict[str, Any] = Field(default_factory=dict)
     feature_importances: Dict[str, Any] = Field(default_factory=dict)
+    assessment_id: Optional[str] = None
 
 
 @app.post("/generate/recommendations")
 @limiter.limit("20/minute")
-async def generate_recommendations(request: Request, inp: RecommendationRequest):
+async def generate_recommendations(
+    request: Request,
+    inp: RecommendationRequest,
+    background_tasks: BackgroundTasks,
+):
     """
     Turn risk predictions + their SHAP drivers into risk-reduction recommendations
     (foods / exercise / lifestyle, each split into do-or-eat vs avoid).
@@ -920,6 +958,18 @@ async def generate_recommendations(request: Request, inp: RecommendationRequest)
         # but never let an unexpected error leak to the client.
         raise HTTPException(
             503, "Could not generate recommendations right now. Please try again."
+        )
+
+    # Best-effort analytics: attach the full recommendations to the stored
+    # submission (matched by assessment_id), AFTER the response is sent. Demo runs
+    # have no assessment_id, so nothing is stored for them.
+    if inp.assessment_id:
+        background_tasks.add_task(
+            db.update_recommendations,
+            inp.assessment_id,
+            result.get("summary"),
+            result.get("source"),
+            result,                       # full items: summary + foods/exercise/lifestyle
         )
 
     return {"status": "success", **result}

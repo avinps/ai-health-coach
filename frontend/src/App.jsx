@@ -65,6 +65,9 @@ export default function App() {
   const [recommendations, setRecommendations] = useState(null);
   const [recsLoading,      setRecsLoading]     = useState(false);
 
+  // Assessment id from /predict/risks — links the recommendations to the stored row
+  const [assessmentId, setAssessmentId] = useState(null);
+
   // Wake the (free-tier) backend as soon as the app loads, so it's ready by the
   // time the user finishes the form and clicks Analyse. Fire-and-forget.
   useEffect(() => {
@@ -72,7 +75,7 @@ export default function App() {
   }, []);
 
   // Phase 1: Analyse 
-  const handleAnalyse = useCallback(async (formPayload, incomingExistingConditions = {}) => {
+  const handleAnalyse = useCallback(async (formPayload, incomingExistingConditions = {}, isDemo = false) => {
     setIsLoading(true);
     setError(null);
     // Store display-only data immediately
@@ -102,8 +105,9 @@ export default function App() {
     };
 
     try {
-      const res = await healthAPI.predictRisks(formPayload, onWaking);
+      const res = await healthAPI.predictRisks(formPayload, onWaking, isDemo);
       setPredictions(res.predictions);
+      setAssessmentId(res.assessment_id || null);
       setExplanation(res.explanation);
       setFeatureImportances(res.feature_importances || {});
       setView('dashboard');
@@ -123,7 +127,7 @@ export default function App() {
     setError(null);
     window.scrollTo({ top: 0, behavior: 'smooth' });
     try {
-      const res = await healthAPI.generateRecommendations(predictions, featureImportances);
+      const res = await healthAPI.generateRecommendations(predictions, featureImportances, assessmentId);
       setRecommendations(res);
       setView('recommendations');
     } catch (e) {
@@ -131,7 +135,7 @@ export default function App() {
     } finally {
       setRecsLoading(false);
     }
-  }, [predictions, featureImportances]);
+  }, [predictions, featureImportances, assessmentId]);
 
   // Full reset 
   const handleReset = () => {
@@ -139,6 +143,7 @@ export default function App() {
     setPredictions(null);
     setExplanation(null);
     setRecommendations(null);
+    setAssessmentId(null);
     setUserProfile({ weight_kg: null, height_cm: null });
     setFormData(null);
     setFeatureImportances({});
