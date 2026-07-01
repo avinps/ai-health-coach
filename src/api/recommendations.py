@@ -570,9 +570,11 @@ def generate(
                 validated["source"] = "llm"
                 validated["disclaimer"] = DISCLAIMER
                 return validated
-        except Exception:
-            print(f"[recommendations] Gemini call failed: {type(e).__name__}: {e}")
-            
+        except Exception as e:
+            # Temporary diagnostic — logs WHY the Gemini path fell back.
+            # Safe to leave in; it only prints, then falls through to deterministic.
+            print(f"[recommendations] Gemini call failed: {type(e).__name__}: {e}", flush=True)
+
     result = _deterministic(elevated)
     result["source"] = "fallback"
     result["disclaimer"] = DISCLAIMER
