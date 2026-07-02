@@ -110,13 +110,6 @@ code {
   background: var(--code-bg);
 }
 
-/* ============================================================
-   Mobile responsiveness fixes (phone-browser layout).
-   Scoped, class-based rules. Desktop appearance is unchanged;
-   overrides only kick in at small viewport widths.
-   ============================================================ */
-
-/* --- App header + 3-step indicator --- */
 .app-header-inner { padding: 20px 40px 12px; }
 .app-step-row     { padding: 0 40px; }
 .app-step         { padding: 10px 18px; font-size: 13px; }

@@ -2,7 +2,7 @@ import React from 'react';
 
 // shows the risk reduction guidance.
 // renders the /generate/recommendations response:
-//   { summary, recommendations: { foods, exercise, lifestyle }, disclaimer }
+// { summary, recommendations: { foods, exercise, lifestyle }, disclaimer }
 // each category has a positive column (eat / do) and an avoid column.
 // each item can carry targets, the risk areas it helps, shown as little chips so
 // the user can see why a suggestion is on their list.
